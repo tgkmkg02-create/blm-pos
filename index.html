@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="M POS">
+<title>BAR LOUNGE M — レジ / 売上管理</title>
+<style>
+  :root {
+    --pink:#FF2E86; --magenta:#E0369F; --purple:#7B3FE4;
+    --grad: linear-gradient(100deg,var(--pink) 0%,var(--magenta) 48%,var(--purple) 100%);
+    --ink:#3D2A39; --ink-soft:#7C6675; --ink-faint:#B9A5B4;
+    --bg:#FBF6F9; --card:#FFFFFF; --rule:#EEDCE8; --blush:#FFEFF7;
+    --ok:#1F9D6B; --warn:#D9822B; --danger:#D5386B;
+    --round:"Hiragino Maru Gothic ProN","Zen Maru Gothic","Yu Gothic",YuGothic,Meiryo,sans-serif;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink); font-family:var(--round);
+    -webkit-font-smoothing:antialiased; overscroll-behavior:none;
+  }
+  button { font-family:inherit; cursor:pointer; }
+  input,select { font-family:inherit; font-size:1rem; }
+  :focus-visible { outline:3px solid var(--magenta); outline-offset:2px; }
+
+  /* ---------- app shell ---------- */
+  .topbar {
+    display:flex; align-items:center; gap:12px;
+    padding:10px 16px; background:var(--card); border-bottom:1px solid var(--rule);
+    position:sticky; top:0; z-index:20;
+  }
+  .brand { display:flex; align-items:center; gap:9px; margin-right:6px; }
+  .brand svg { width:20px; }
+  .brand b { font-family:Candara,"Gill Sans MT",sans-serif; font-weight:400; letter-spacing:.12em; font-size:.95rem; white-space:nowrap; }
+  .nav { display:flex; gap:6px; flex:1; }
+  .nav button {
+    border:1px solid var(--rule); background:#fff; color:var(--ink-soft);
+    padding:9px 16px; border-radius:999px; font-size:.88rem; font-weight:700;
+  }
+  .nav button[aria-current="true"] { background:var(--grad); color:#fff; border-color:transparent; }
+  .clock { font-variant-numeric:tabular-nums; color:var(--ink-soft); font-size:.85rem; }
+
+  main { padding:16px; max-width:1400px; margin:0 auto; }
+  h2.title { margin:0 0 14px; font-size:1.05rem; letter-spacing:.06em; }
+
+  /* ---------- seats ---------- */
+  .seat-group { margin-bottom:22px; }
+  .seat-group > h3 {
+    margin:0 0 10px; font-size:.74rem; letter-spacing:.22em; color:var(--magenta);
+  }
+  .seats { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; }
+  .seat {
+    border:1px solid var(--rule); background:var(--card); border-radius:18px;
+    padding:14px 15px; text-align:left; min-height:112px;
+    display:flex; flex-direction:column; gap:6px; transition:transform .08s;
+  }
+  .seat:active { transform:scale(.98); }
+  .seat .no { font-size:1.15rem; font-weight:700; letter-spacing:.04em; }
+  .seat .empty { color:var(--ink-faint); font-size:.82rem; }
+  .seat.busy { border-color:transparent; box-shadow:0 0 0 2px var(--magenta) inset; background:var(--blush); }
+  .seat .meta { font-size:.78rem; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+  .seat .amount { margin-top:auto; font-size:1.1rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  .seat .over { color:var(--warn); font-weight:700; }
+
+  /* ---------- ticket ---------- */
+  .pos { display:grid; grid-template-columns:minmax(340px,400px) minmax(0,1fr); gap:14px; align-items:start; }
+  @media (max-width:900px){ .pos { grid-template-columns:1fr; } }
+
+  .panel { background:var(--card); border:1px solid var(--rule); border-radius:18px; padding:14px; }
+
+  .ticket-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .ticket-head .seatno { font-size:1.2rem; font-weight:700; }
+  .pill {
+    border:1px solid var(--rule); background:#fff; border-radius:999px;
+    padding:6px 12px; font-size:.8rem; color:var(--ink-soft); font-variant-numeric:tabular-nums;
+  }
+  .pill.warn { border-color:var(--warn); color:var(--warn); font-weight:700; }
+
+  .lines { display:flex; flex-direction:column; gap:2px; margin:6px 0 12px; max-height:46vh; overflow-y:auto; }
+  .line { display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center; padding:8px 4px; border-bottom:1px dotted var(--rule); }
+  .line .nm { font-size:.9rem; }
+  .line .nm small { display:block; color:var(--magenta); font-size:.7rem; }
+  .line .qty { display:flex; align-items:center; gap:6px; }
+  .line .qty button {
+    width:34px; height:34px; border-radius:10px; border:1px solid var(--rule);
+    background:#fff; font-size:1.05rem; font-weight:700; color:var(--ink-soft);
+  }
+  .line .qty span { min-width:20px; text-align:center; font-variant-numeric:tabular-nums; font-weight:700; }
+  .line .amt { font-variant-numeric:tabular-nums; font-weight:700; min-width:74px; text-align:right; }
+  .line.fixed .qty span { min-width:auto; }
+  .empty-note { color:var(--ink-faint); font-size:.85rem; padding:18px 4px; }
+
+  .totals { border-top:2px solid var(--rule); padding-top:10px; display:flex; flex-direction:column; gap:6px; }
+  .totals div { display:flex; justify-content:space-between; font-size:.88rem; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+  .totals div.grand { font-size:1.25rem; color:var(--ink); font-weight:700; padding-top:6px; }
+
+  .actions { display:flex; gap:8px; margin-top:12px; }
+  .btn {
+    flex:1; border:none; border-radius:14px; padding:15px 12px; font-size:.95rem; font-weight:700; color:#fff;
+    background:var(--grad); min-height:52px;
+  }
+  .btn.ghost { background:#fff; color:var(--ink-soft); border:1px solid var(--rule); }
+  .btn.danger { background:#fff; color:var(--danger); border:1px solid #F3CBD9; }
+  .btn:active { filter:brightness(.95); }
+  .btn[disabled] { opacity:.45; }
+
+  /* ---------- menu grid ---------- */
+  .cats { display:flex; flex-wrap:wrap; gap:7px; padding-bottom:10px; }
+  .cats button {
+    white-space:nowrap; border:1px solid var(--rule); background:#fff; color:var(--ink-soft);
+    border-radius:999px; padding:9px 15px; font-size:.85rem; font-weight:700;
+  }
+  .cats button[aria-current="true"] { background:var(--grad); color:#fff; border-color:transparent; }
+  .items { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .item {
+    border:1px solid var(--rule); background:#fff; border-radius:16px; padding:12px;
+    text-align:left; min-height:78px; display:flex; flex-direction:column; gap:6px;
+  }
+  .item:active { background:var(--blush); }
+  .item .nm { font-size:.9rem; font-weight:700; line-height:1.35; }
+  .item .pr { margin-top:auto; font-variant-numeric:tabular-nums; color:var(--magenta); font-weight:700; font-size:.9rem; }
+
+  /* ---------- report ---------- */
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:18px; }
+  .kpi { background:var(--card); border:1px solid var(--rule); border-radius:16px; padding:14px; }
+  .kpi span { display:block; font-size:.72rem; letter-spacing:.16em; color:var(--ink-faint); }
+  .kpi b { display:block; margin-top:6px; font-size:1.5rem; font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-size:.86rem; }
+  th,td { padding:9px 8px; border-bottom:1px solid var(--rule); text-align:left; }
+  th { font-size:.7rem; letter-spacing:.14em; color:var(--ink-faint); font-weight:700; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .scroll { overflow-x:auto; }
+  .tiny { font-size:.78rem; color:var(--ink-soft); }
+  .linkish { background:none; border:none; color:var(--danger); font-size:.8rem; padding:4px; }
+
+  /* ---------- settings ---------- */
+  .field { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .field label { font-size:.86rem; min-width:190px; }
+  .field input[type="number"], .field input[type="text"] {
+    border:1px solid var(--rule); border-radius:10px; padding:9px 11px; width:130px;
+    font-variant-numeric:tabular-nums;
+  }
+  .field input[type="text"].wide { width:min(340px,100%); }
+  .subhead { margin:22px 0 10px; font-size:.74rem; letter-spacing:.2em; color:var(--magenta); }
+
+  /* ---------- modal ---------- */
+  .backdrop {
+    position:fixed; inset:0; background:rgba(61,42,57,.45); display:flex;
+    align-items:center; justify-content:center; padding:18px; z-index:50;
+  }
+  .modal {
+    background:var(--card); border-radius:22px; padding:20px; width:min(460px,100%);
+    max-height:88vh; overflow-y:auto;
+  }
+  .modal h3 { margin:0 0 14px; font-size:1rem; }
+  .stepper { display:flex; align-items:center; justify-content:center; gap:18px; margin:10px 0 18px; }
+  .stepper button { width:60px; height:60px; border-radius:20px; border:1px solid var(--rule); background:#fff; font-size:1.5rem; font-weight:700; color:var(--magenta); }
+  .stepper b { font-size:2.2rem; font-variant-numeric:tabular-nums; min-width:70px; text-align:center; }
+  .choices { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; }
+  .choices button { border:1px solid var(--rule); background:#fff; border-radius:14px; padding:14px 10px; font-size:.9rem; font-weight:700; }
+  .choices button.sel { background:var(--grad); color:#fff; border-color:transparent; }
+  .pay-input { width:100%; border:1px solid var(--rule); border-radius:14px; padding:14px; font-size:1.4rem; text-align:right; font-variant-numeric:tabular-nums; }
+  .change { display:flex; justify-content:space-between; font-size:1.1rem; font-weight:700; margin-top:12px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 60 72" aria-hidden="true">
+      <defs><linearGradient id="pt" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0%" stop-color="#7B3FE4"/><stop offset="52%" stop-color="#E0369F"/><stop offset="100%" stop-color="#FF2E86"/>
+      </linearGradient></defs>
+      <g fill="url(#pt)">
+        <path d="M8 70 C2 50 4 22 16 2 C24 24 22 50 14 70 Z"/>
+        <path d="M24 68 C20 52 22 30 32 14 C38 32 36 54 30 68 Z"/>
+        <path d="M39 66 C37 54 40 38 48 26 C52 40 50 56 45 66 Z"/>
+      </g>
+    </svg>
+    <b>M POS</b>
+  </div>
+  <nav class="nav" id="nav"></nav>
+  <span class="clock" id="clock"></span>
+</div>
+
+<main id="app"></main>
+<div id="modal-root"></div>
+
+<script>
+"use strict";
+
+/* ============ storage ============ */
+
+const KEY = "blm-pos-v1";
+
+function defaultMenu() {
+  const m = (cat, name, price, backType) => ({ id: cat + ":" + name, cat, name, price, backType: backType || null });
+  return [
+    m("同伴・システム", "同伴", 2000, "dohan"),
+    m("キャストドリンク", "ドリンク 小", 1500, "small"),
+    m("キャストドリンク", "ドリンク 大", 3000, "large"),
+    m("キャストドリンク", "ピッチャー", 5000, "pitcher"),
+    m("アルコール", "瓶ビール", 1000),
+    m("アルコール", "スラット", 1000),
+    m("アルコール", "氷結", 1000),
+    m("ショット", "クライナー", 1000),
+    m("ショット", "クライナー ボトル", 10000),
+    m("ショット", "テキーラ", 1000),
+    m("ショット", "テキーラ観覧車 12杯", 11000),
+    m("シャンパン", "オリシャン", 20000, "pct"),
+    m("シャンパン", "オリシャン ロゼ", 35000, "pct"),
+    m("シャンパン", "ヴーヴ・クリコ", 30000, "pct"),
+    m("シャンパン", "アルマンド", 120000, "pct"),
+    m("ボトル", "黒霧島", 10000),
+    m("ボトル", "吉四六", 12000),
+    m("ボトル", "茉莉花", 10000),
+    m("ボトル", "サントリー 角", 12000),
+    m("ソフトドリンク", "コーラ", 700),
+    m("ソフトドリンク", "オレンジ", 700),
+    m("ソフトドリンク", "アップル", 700),
+    m("ソフトドリンク", "緑茶", 700),
+    m("ソフトドリンク", "ウーロン茶", 700),
+    m("ソフトドリンク", "ジャスミン茶", 700),
+    m("割物", "割物", 2000),
+  ];
+}
+
+function defaultState() {
+  return {
+    settings: {
+      counterSeats: 6, boxSeats: 4,
+      counterSet: 2000, boxSet: 3000, setMinutes: 60,
+      cardFeePct: 10, servicePct: 0,
+      casts: ["キャストA", "キャストB", "キャストC"],
+      back: { dohan: 1000, small: 500, large: 1000, pitcher: 1500, pct: 10 },
+    },
+    menu: defaultMenu(),
+    tickets: [],
+    seq: 1,
+  };
+}
+
+let state = load();
+let view = { name: "tables", ticketId: null, cat: "同伴・システム" };
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return defaultState();
+    const parsed = JSON.parse(raw);
+    return Object.assign(defaultState(), parsed);
+  } catch (e) {
+    console.warn("state load failed, starting fresh", e);
+    return defaultState();
+  }
+}
+
+let saveFailed = false;
+
+function save() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch (e) {
+    if (!saveFailed) {
+      saveFailed = true;
+      console.warn("save failed", e);
+      alert("保存できませんでした。この画面ではデータが残りません（ファイルを直接開いた場合など）。");
+    }
+  }
+}
+
+/* ============ helpers ============ */
+
+const yen = n => "¥" + Math.round(n).toLocaleString("ja-JP");
+const pad = n => String(n).padStart(2, "0");
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+function hhmm(ts) { const d = new Date(ts); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function dayKey(ts) { const d = new Date(ts); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function minutesSince(ts) { return Math.floor((Date.now() - ts) / 60000); }
+
+function seatLabels() {
+  const s = state.settings, out = [];
+  for (let i = 1; i <= s.counterSeats; i++) out.push({ id: "C" + i, type: "counter", label: "カウンター " + i });
+  for (let i = 1; i <= s.boxSeats; i++) out.push({ id: "B" + i, type: "box", label: "ボックス " + i });
+  return out;
+}
+
+function openTicketOf(seatId) { return state.tickets.find(t => t.seatId === seatId && t.status === "open") || null; }
+function ticketById(id) { return state.tickets.find(t => t.id === id) || null; }
+
+function setUnit(t) { return t.seatType === "box" ? state.settings.boxSet : state.settings.counterSet; }
+
+function totals(t, method) {
+  const setAmount = setUnit(t) * t.people * t.sets;
+  const itemAmount = t.items.reduce((a, it) => a + it.price * it.qty, 0);
+  const subtotal = setAmount + itemAmount;
+  const service = Math.round(subtotal * state.settings.servicePct / 100);
+  const base = subtotal + service;
+  const cardFee = method === "card" ? Math.round(base * state.settings.cardFeePct / 100) : 0;
+  return { setAmount, itemAmount, subtotal, service, cardFee, total: base + cardFee };
+}
+
+function overMinutes(t) {
+  const limit = state.settings.setMinutes * t.sets;
+  return minutesSince(t.openedAt) - limit;
+}
+
+/* ============ render ============ */
+
+const app = document.getElementById("app");
+
+function render() {
+  renderNav();
+  if (view.name === "tables") renderTables();
+  else if (view.name === "ticket") renderTicket();
+  else if (view.name === "report") renderReport();
+  else renderSettings();
+}
+
+function renderNav() {
+  const tabs = [["tables", "卓・レジ"], ["report", "売上"], ["settings", "設定"]];
+  document.getElementById("nav").innerHTML = tabs.map(([k, label]) =>
+    `<button data-act="go" data-view="${k}" aria-current="${view.name === k || (k === "tables" && view.name === "ticket")}">${label}</button>`
+  ).join("");
+}
+
+function renderTables() {
+  const groups = [["counter", "カウンター"], ["box", "ボックス"]];
+  const html = groups.map(([type, label]) => {
+    const seats = seatLabels().filter(s => s.type === type).map(s => {
+      const t = openTicketOf(s.id);
+      if (!t) {
+        return `<button class="seat" data-act="open-seat" data-seat="${s.id}" data-type="${type}">
+          <span class="no">${s.id}</span><span class="empty">空席</span>
+        </button>`;
+      }
+      const over = overMinutes(t);
+      const sum = totals(t, "cash").total;
+      return `<button class="seat busy" data-act="go-ticket" data-id="${t.id}">
+        <span class="no">${s.id}</span>
+        <span class="meta">${t.people}名 ・ ${hhmm(t.openedAt)}〜 <span data-since="${t.openedAt}">${minutesSince(t.openedAt)}分</span></span>
+        <span class="meta ${over >= 0 ? "over" : ""}">${over >= 0 ? "延長 " + over + "分 超過" : "セット残 " + (-over) + "分"}</span>
+        <span class="amount">${yen(sum)}</span>
+      </button>`;
+    }).join("");
+    return `<div class="seat-group"><h3>${label}</h3><div class="seats">${seats}</div></div>`;
+  }).join("");
+  app.innerHTML = `<h2 class="title">卓一覧</h2>${html}`;
+}
+
+function renderTicket() {
+  const t = ticketById(view.ticketId);
+  if (!t || t.status !== "open") { view = { ...view, name: "tables" }; return render(); }
+
+  const cats = [...new Set(state.menu.map(m => m.cat))];
+  if (!cats.includes(view.cat)) view.cat = cats[0];
+  const tt = totals(t, "cash");
+  const over = overMinutes(t);
+
+  const lines = t.items.length === 0
+    ? `<p class="empty-note">セット料金のみです。右のメニューから追加してください。</p>`
+    : t.items.map((it, i) => `<div class="line">
+        <span class="nm">${esc(it.name)}${it.cast ? `<small>${esc(it.cast)}</small>` : ""}</span>
+        <span class="qty">
+          <button data-act="qty" data-i="${i}" data-d="-1" aria-label="減らす">−</button>
+          <span>${it.qty}</span>
+          <button data-act="qty" data-i="${i}" data-d="1" aria-label="増やす">＋</button>
+        </span>
+        <span class="amt">${yen(it.price * it.qty)}</span>
+      </div>`).join("");
+
+  const items = state.menu.filter(m => m.cat === view.cat).map(m =>
+    `<button class="item" data-act="add" data-id="${esc(m.id)}">
+      <span class="nm">${esc(m.name)}</span><span class="pr">${yen(m.price)}</span>
+    </button>`).join("");
+
+  app.innerHTML = `
+  <div class="pos">
+    <div class="panel">
+      <div class="ticket-head">
+        <span class="seatno">${t.seatId}</span>
+        <button class="pill" data-act="people">${t.people}名 ✎</button>
+        <span class="pill">${hhmm(t.openedAt)}〜 <span data-since="${t.openedAt}">${minutesSince(t.openedAt)}分</span></span>
+        <span class="pill ${over >= 0 ? "warn" : ""}">セット${t.sets} ${over >= 0 ? "／超過" + over + "分" : ""}</span>
+      </div>
+
+      <div class="line fixed">
+        <span class="nm">セット料金（${t.seatType === "box" ? "ボックス" : "カウンター"}）</span>
+        <span class="qty"><span>${t.people}名 × ${t.sets}</span></span>
+        <span class="amt">${yen(tt.setAmount)}</span>
+      </div>
+
+      <div class="lines">${lines}</div>
+
+      <div class="totals">
+        <div><span>小計</span><span>${yen(tt.subtotal)}</span></div>
+        ${state.settings.servicePct ? `<div><span>サービス料 ${state.settings.servicePct}%</span><span>${yen(tt.service)}</span></div>` : ""}
+        <div class="grand"><span>合計（現金）</span><span>${yen(tt.total)}</span></div>
+        <div><span>カード払いの場合（+${state.settings.cardFeePct}%）</span><span>${yen(totals(t, "card").total)}</span></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn ghost" data-act="extend">延長 +1</button>
+        <button class="btn" data-act="checkout">お会計</button>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" data-act="go" data-view="tables">卓一覧へ</button>
+        <button class="btn danger" data-act="void">伝票取消</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="cats">${cats.map(c =>
+        `<button data-act="cat" data-cat="${esc(c)}" aria-current="${c === view.cat}">${esc(c)}</button>`).join("")}</div>
+      <div class="items">${items}</div>
+    </div>
+  </div>`;
+}
+
+function renderReport() {
+  const today = dayKey(Date.now());
+  const closed = state.tickets.filter(t => t.status === "closed" && dayKey(t.closedAt) === today);
+  const sales = closed.reduce((a, t) => a + t.payment.total, 0);
+  const guests = closed.reduce((a, t) => a + t.people, 0);
+  const cash = closed.filter(t => t.payment.method === "cash").reduce((a, t) => a + t.payment.total, 0);
+  const card = closed.filter(t => t.payment.method === "card").reduce((a, t) => a + t.payment.total, 0);
+
+  const backs = castBacks(closed);
+  const backRows = backs.length
+    ? backs.map(b => `<tr><td>${esc(b.cast)}</td><td class="num">${b.count}</td><td class="num">${yen(b.sales)}</td><td class="num">${yen(b.back)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="tiny">キャスト指定の売上はまだありません</td></tr>`;
+
+  const rows = closed.length
+    ? closed.slice().reverse().map(t => `<tr>
+        <td>#${t.no}</td><td>${t.seatId}</td><td class="num">${t.people}</td>
+        <td>${hhmm(t.openedAt)}–${hhmm(t.closedAt)}</td>
+        <td>${t.payment.method === "card" ? "カード" : "現金"}</td>
+        <td class="num">${yen(t.payment.total)}</td>
+        <td><button class="linkish" data-act="delete-ticket" data-id="${t.id}">取消</button></td>
+      </tr>`).join("")
+    : `<tr><td colspan="7" class="tiny">本日の会計はまだありません</td></tr>`;
+
+  app.innerHTML = `
+    <h2 class="title">本日の売上 <span class="tiny">${today}</span></h2>
+    <div class="kpis">
+      <div class="kpi"><span>売上合計</span><b>${yen(sales)}</b></div>
+      <div class="kpi"><span>組数 / 客数</span><b>${closed.length} / ${guests}</b></div>
+      <div class="kpi"><span>客単価</span><b>${guests ? yen(sales / guests) : "¥0"}</b></div>
+      <div class="kpi"><span>現金</span><b>${yen(cash)}</b></div>
+      <div class="kpi"><span>カード</span><b>${yen(card)}</b></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">キャスト別（本日）</h3>
+      <div class="scroll"><table>
+        <tr><th>キャスト</th><th class="num">本数</th><th class="num">売上</th><th class="num">バック</th></tr>
+        ${backRows}
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h3 class="subhead" style="margin-top:0">伝票一覧</h3>
+      <div class="scroll"><table>
+        <tr><th>No</th><th>卓</th><th class="num">人数</th><th>時間</th><th>支払</th><th class="num">金額</th><th></th></tr>
+        ${rows}
+      </table></div>
+      <div class="actions">
+        <button class="btn ghost" data-act="csv-today">本日をCSV出力</button>
+        <button class="btn ghost" data-act="csv-all">全期間をCSV出力</button>
+      </div>
+    </div>`;
+}
+
+function castBacks(tickets) {
+  const map = new Map();
+  const rate = state.settings.back;
+  tickets.forEach(t => t.items.forEach(it => {
+    if (!it.cast || !it.backType) return;
+    const amount = it.price * it.qty;
+    const back = it.backType === "pct" ? Math.round(amount * rate.pct / 100) : (rate[it.backType] || 0) * it.qty;
+    const cur = map.get(it.cast) || { cast: it.cast, count: 0, sales: 0, back: 0 };
+    cur.count += it.qty; cur.sales += amount; cur.back += back;
+    map.set(it.cast, cur);
+  }));
+  return [...map.values()].sort((a, b) => b.back - a.back);
+}
+
+function renderSettings() {
+  const s = state.settings;
+  const num = (label, key, suffix) =>
+    `<div class="field"><label>${label}</label><input type="number" data-set="${key}" value="${s[key]}"><span class="tiny">${suffix || ""}</span></div>`;
+  const backNum = (label, key, suffix) =>
+    `<div class="field"><label>${label}</label><input type="number" data-back="${key}" value="${s.back[key]}"><span class="tiny">${suffix || "円 / 1杯"}</span></div>`;
+
+  const menuRows = state.menu.map((m, i) => `<tr>
+      <td>${esc(m.cat)}</td>
+      <td><input type="text" data-menu-name="${i}" value="${esc(m.name)}" class="wide"></td>
+      <td class="num"><input type="number" data-menu-price="${i}" value="${m.price}"></td>
+      <td>${m.backType ? "バック対象" : ""}</td>
+      <td><button class="linkish" data-act="del-menu" data-i="${i}">削除</button></td>
+    </tr>`).join("");
+
+  app.innerHTML = `
+    <h2 class="title">設定</h2>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">料金・席</h3>
+      ${num("カウンター セット料金", "counterSet", "円 / 1名")}
+      ${num("ボックス セット料金", "boxSet", "円 / 1名")}
+      ${num("セット時間", "setMinutes", "分")}
+      ${num("カード手数料", "cardFeePct", "%")}
+      ${num("サービス料", "servicePct", "% ／ 0 なら非表示")}
+      ${num("カウンター席数", "counterSeats", "席")}
+      ${num("ボックス席数", "boxSeats", "卓")}
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">キャストバック</h3>
+      ${backNum("同伴", "dohan", "円 / 1件")}
+      ${backNum("ドリンク 小", "small")}
+      ${backNum("ドリンク 大", "large")}
+      ${backNum("ピッチャー", "pitcher")}
+      ${backNum("シャンパン", "pct", "%（売価に対して）")}
+      <div class="field">
+        <label>キャスト名（カンマ区切り）</label>
+        <input type="text" class="wide" data-casts value="${esc(s.casts.join(", "))}">
+      </div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">メニュー</h3>
+      <div class="scroll"><table>
+        <tr><th>カテゴリ</th><th>商品名</th><th class="num">価格</th><th></th><th></th></tr>
+        ${menuRows}
+      </table></div>
+      <div class="actions"><button class="btn ghost" data-act="add-menu">商品を追加</button></div>
+    </div>
+
+    <div class="panel">
+      <h3 class="subhead" style="margin-top:0">データ</h3>
+      <p class="tiny">このiPad（このブラウザ）の中に保存されています。バックアップは書き出しておいてください。</p>
+      <div class="actions">
+        <button class="btn ghost" data-act="export">バックアップ書き出し</button>
+        <button class="btn ghost" data-act="import">読み込み</button>
+      </div>
+      <div class="actions">
+        <button class="btn danger" data-act="reset">全データ初期化</button>
+      </div>
+    </div>`;
+}
+
+/* ============ modal ============ */
+
+const modalRoot = document.getElementById("modal-root");
+let modalOnClick = null;
+
+function openModal(html, onClick) {
+  modalRoot.innerHTML = `<div class="backdrop"><div class="modal">${html}</div></div>`;
+  modalOnClick = onClick;
+}
+function closeModal() { modalRoot.innerHTML = ""; modalOnClick = null; }
+
+modalRoot.addEventListener("click", e => {
+  if (e.target.classList.contains("backdrop")) return closeModal();
+  const btn = e.target.closest("button");
+  if (btn && modalOnClick) modalOnClick(btn, e);
+});
+
+function askPeople(initial, onOk) {
+  let n = initial;
+  const body = () => `
+    <h3>人数</h3>
+    <div class="stepper">
+      <button data-m="-1">−</button><b id="pv">${n}</b><button data-m="1">＋</button>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" data-x="cancel">やめる</button>
+      <button class="btn" data-x="ok">決定</button>
+    </div>`;
+  openModal(body(), btn => {
+    if (btn.dataset.m) {
+      n = Math.max(1, Math.min(20, n + Number(btn.dataset.m)));
+      document.getElementById("pv").textContent = n;
+    } else if (btn.dataset.x === "ok") { closeModal(); onOk(n); }
+    else closeModal();
+  });
+}
+
+function askCast(onPick) {
+  const list = state.settings.casts.map(c => `<button data-c="${esc(c)}">${esc(c)}</button>`).join("");
+  openModal(`<h3>どのキャスト？</h3><div class="choices">${list}
+    <button data-c="">指定なし</button></div>
+    <div class="actions"><button class="btn ghost" data-x="cancel">やめる</button></div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.c !== undefined) { closeModal(); onPick(btn.dataset.c); }
+  });
+}
+
+function openCheckout(t) {
+  let method = "cash";
+  let received = 0;
+
+  const draw = () => {
+    const tt = totals(t, method);
+    const change = received - tt.total;
+    modalRoot.querySelector(".modal").innerHTML = `
+      <h3>お会計 — ${t.seatId}</h3>
+      <div class="choices" style="grid-template-columns:1fr 1fr">
+        <button data-p="cash" class="${method === "cash" ? "sel" : ""}">現金</button>
+        <button data-p="card" class="${method === "card" ? "sel" : ""}">カード</button>
+      </div>
+      <div class="totals" style="margin-top:16px">
+        <div><span>小計</span><span>${yen(tt.subtotal)}</span></div>
+        ${tt.service ? `<div><span>サービス料</span><span>${yen(tt.service)}</span></div>` : ""}
+        ${tt.cardFee ? `<div><span>カード手数料 ${state.settings.cardFeePct}%</span><span>${yen(tt.cardFee)}</span></div>` : ""}
+        <div class="grand"><span>合計</span><span>${yen(tt.total)}</span></div>
+      </div>
+      ${method === "cash" ? `
+        <p class="tiny" style="margin:14px 0 6px">お預かり</p>
+        <input class="pay-input" inputmode="numeric" id="recv" value="${received || ""}" placeholder="0">
+        <div class="change"><span>お釣り</span><span>${change >= 0 ? yen(change) : "—"}</span></div>` : ""}
+      <div class="actions">
+        <button class="btn ghost" data-x="cancel">やめる</button>
+        <button class="btn" data-x="done">会計を確定</button>
+      </div>`;
+    const recv = modalRoot.querySelector("#recv");
+    if (recv) {
+      recv.addEventListener("input", () => { received = Number(recv.value.replace(/[^0-9]/g, "")) || 0; });
+      recv.addEventListener("change", draw);
+    }
+  };
+
+  openModal("", btn => {
+    if (btn.dataset.p) { method = btn.dataset.p; return draw(); }
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x === "done") { closeModal(); closeTicket(t, method); }
+  });
+  draw();
+}
+
+/* ============ actions ============ */
+
+function newTicket(seatId, type, people) {
+  const t = {
+    id: "t" + Date.now() + Math.random().toString(36).slice(2, 6),
+    no: state.seq++,
+    seatId, seatType: type, people, sets: 1,
+    openedAt: Date.now(), closedAt: null,
+    items: [], status: "open", payment: null,
+  };
+  state.tickets.push(t);
+  save();
+  view = { ...view, name: "ticket", ticketId: t.id };
+  render();
+}
+
+function addItem(t, menuItem, cast) {
+  const same = t.items.find(it => it.menuId === menuItem.id && (it.cast || "") === (cast || ""));
+  if (same) same.qty += 1;
+  else t.items.push({
+    menuId: menuItem.id, name: menuItem.name, price: menuItem.price,
+    qty: 1, cast: cast || "", backType: menuItem.backType,
+  });
+  save(); render();
+}
+
+function closeTicket(t, method) {
+  const tt = totals(t, method);
+  t.status = "closed";
+  t.closedAt = Date.now();
+  t.payment = { method, subtotal: tt.subtotal, service: tt.service, cardFee: tt.cardFee, total: tt.total };
+  save();
+  view = { ...view, name: "tables", ticketId: null };
+  render();
+}
+
+function csv(tickets, filename) {
+  const head = ["日付", "伝票No", "卓", "人数", "開始", "終了", "支払", "小計", "サービス料", "カード手数料", "合計", "商品", "数量", "単価", "キャスト"];
+  const rows = [head];
+  tickets.forEach(t => {
+    const base = [dayKey(t.closedAt), t.no, t.seatId, t.people, hhmm(t.openedAt), hhmm(t.closedAt),
+      t.payment.method === "card" ? "カード" : "現金",
+      t.payment.subtotal, t.payment.service, t.payment.cardFee, t.payment.total];
+    rows.push(base.concat([`セット料金（${t.seatType === "box" ? "ボックス" : "カウンター"}）`, t.people * t.sets, setUnit(t), ""]));
+    t.items.forEach(it => rows.push(base.concat([it.name, it.qty, it.price, it.cast || ""])));
+  });
+  const body = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const blob = new Blob(["﻿" + body], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportJson() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "blm-pos-backup-" + dayKey(Date.now()) + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function importJson() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json";
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        state = Object.assign(defaultState(), JSON.parse(String(reader.result)));
+        save(); render();
+        alert("読み込みました。");
+      } catch (e) {
+        alert("ファイルを読めませんでした。");
+      }
+    };
+    reader.readAsText(file);
+  });
+  input.click();
+}
+
+/* ============ events ============ */
+
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-act]");
+  if (!el || modalRoot.contains(el)) return;
+  const act = el.dataset.act;
+  const t = ticketById(view.ticketId);
+
+  if (act === "go") { view = { ...view, name: el.dataset.view }; return render(); }
+  if (act === "go-ticket") { view = { ...view, name: "ticket", ticketId: el.dataset.id }; return render(); }
+
+  if (act === "open-seat") {
+    const seat = el.dataset.seat, type = el.dataset.type;
+    return askPeople(1, n => newTicket(seat, type, n));
+  }
+  if (act === "people" && t) return askPeople(t.people, n => { t.people = n; save(); render(); });
+  if (act === "cat") { view.cat = el.dataset.cat; return render(); }
+
+  if (act === "add" && t) {
+    const m = state.menu.find(x => x.id === el.dataset.id);
+    if (!m) return;
+    if (m.backType) return askCast(cast => addItem(t, m, cast));
+    return addItem(t, m, "");
+  }
+  if (act === "qty" && t) {
+    const i = Number(el.dataset.i);
+    t.items[i].qty += Number(el.dataset.d);
+    if (t.items[i].qty <= 0) t.items.splice(i, 1);
+    save(); return render();
+  }
+  if (act === "extend" && t) { t.sets += 1; save(); return render(); }
+  if (act === "checkout" && t) return openCheckout(t);
+  if (act === "void" && t) {
+    if (!confirm("この伝票を取り消します。よろしいですか？")) return;
+    state.tickets = state.tickets.filter(x => x.id !== t.id);
+    save(); view = { ...view, name: "tables", ticketId: null }; return render();
+  }
+
+  if (act === "delete-ticket") {
+    if (!confirm("この会計を取り消します。よろしいですか？")) return;
+    state.tickets = state.tickets.filter(x => x.id !== el.dataset.id);
+    save(); return render();
+  }
+  if (act === "csv-today") {
+    const today = dayKey(Date.now());
+    const list = state.tickets.filter(x => x.status === "closed" && dayKey(x.closedAt) === today);
+    if (!list.length) return alert("本日の会計がありません。");
+    return csv(list, "sales-" + today + ".csv");
+  }
+  if (act === "csv-all") {
+    const list = state.tickets.filter(x => x.status === "closed");
+    if (!list.length) return alert("会計データがありません。");
+    return csv(list, "sales-all.csv");
+  }
+
+  if (act === "add-menu") {
+    const cat = prompt("カテゴリ名", view.cat || "その他");
+    if (!cat) return;
+    const name = prompt("商品名");
+    if (!name) return;
+    const price = Number(prompt("価格（数字のみ）", "1000"));
+    if (!Number.isFinite(price)) return;
+    state.menu.push({ id: cat + ":" + name + ":" + Date.now(), cat, name, price, backType: null });
+    save(); return render();
+  }
+  if (act === "del-menu") {
+    state.menu.splice(Number(el.dataset.i), 1);
+    save(); return render();
+  }
+  if (act === "export") return exportJson();
+  if (act === "import") return importJson();
+  if (act === "reset") {
+    if (!confirm("すべての売上・設定を消去します。よろしいですか？")) return;
+    state = defaultState(); save(); return render();
+  }
+});
+
+document.addEventListener("change", e => {
+  const el = e.target;
+  if (el.dataset.set !== undefined && el.dataset.set !== "") {
+    state.settings[el.dataset.set] = Number(el.value) || 0;
+  } else if (el.dataset.back !== undefined && el.dataset.back !== "") {
+    state.settings.back[el.dataset.back] = Number(el.value) || 0;
+  } else if (el.hasAttribute("data-casts")) {
+    state.settings.casts = el.value.split(",").map(s => s.trim()).filter(Boolean);
+  } else if (el.dataset.menuName !== undefined && el.dataset.menuName !== "") {
+    state.menu[Number(el.dataset.menuName)].name = el.value;
+  } else if (el.dataset.menuPrice !== undefined && el.dataset.menuPrice !== "") {
+    state.menu[Number(el.dataset.menuPrice)].price = Number(el.value) || 0;
+  } else return;
+  save();
+});
+
+/* live clock + elapsed minutes without full re-render */
+function tick() {
+  const now = new Date();
+  document.getElementById("clock").textContent = pad(now.getHours()) + ":" + pad(now.getMinutes());
+  document.querySelectorAll("[data-since]").forEach(el => {
+    el.textContent = minutesSince(Number(el.dataset.since)) + "分";
+  });
+}
+setInterval(tick, 20000);
+
+render();
+tick();
+</script>
+</body>
+</html>
