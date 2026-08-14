@@ -162,6 +162,7 @@
   .choices { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; }
   .choices button { border:1px solid var(--rule); background:#fff; border-radius:14px; padding:14px 10px; font-size:.9rem; font-weight:700; }
   .choices button.sel { background:var(--grad); color:#fff; border-color:transparent; }
+  .choices button small { display:block; margin-top:4px; font-weight:400; font-size:.74rem; opacity:.75; font-variant-numeric:tabular-nums; }
   .pay-input { width:100%; border:1px solid var(--rule); border-radius:14px; padding:14px; font-size:1.4rem; text-align:right; font-variant-numeric:tabular-nums; }
   .change { display:flex; justify-content:space-between; font-size:1.1rem; font-weight:700; margin-top:12px; }
 </style>
@@ -197,7 +198,7 @@
 const KEY = "blm-pos-v1";
 
 /* メニュー/料率を変更したら上げる。既存iPadの保存データを新しい既定値に入れ替える */
-const MENU_VERSION = 2;
+const MENU_VERSION = 3;
 
 function defaultMenu() {
   const m = (cat, name, price, backType) => ({ id: cat + ":" + name, cat, name, price, backType: backType || null });
@@ -214,7 +215,6 @@ function defaultMenu() {
     m("ショット", "コカボム", 1000),
     m("ショット", "ウォッカ", 1000),
     m("ショット", "イェガー", 1000),
-    m("ショット", "テキーラ観覧車 12杯", 11000),
     m("シャンパン", "オリシャン", 20000, "pct"),
     m("シャンパン", "オリシャン ロゼ", 40000, "pct"),
     m("シャンパン", "ヴーヴ イエロー", 30000, "pct"),
@@ -241,7 +241,7 @@ function defaultState() {
   return {
     settings: {
       counterSeats: 6, boxSeats: 4,
-      counterSet: 2000, boxSet: 3000, setMinutes: 60,
+      counterSet: 2000, boxSet: 3000, freeSet: 6000, setMinutes: 60,
       cardFeePct: 10, servicePct: 20,
       casts: ["キャストA", "キャストB", "キャストC"],
       back: { dohan: 1000, small: 500, large: 1000, pitcher: 1500, pct: 10 },
@@ -316,7 +316,15 @@ function seatLabels() {
 function openTicketOf(seatId) { return state.tickets.find(t => t.seatId === seatId && t.status === "open") || null; }
 function ticketById(id) { return state.tickets.find(t => t.id === id) || null; }
 
-function setUnit(t) { return t.seatType === "box" ? state.settings.boxSet : state.settings.counterSet; }
+/* 旧データには plan が無いので席種をそのままプランとして扱う */
+function planOf(t) { return t.plan || t.seatType; }
+function planLabel(p) { return p === "free" ? "フリータイム" : p === "box" ? "ボックス" : "カウンター"; }
+
+function setUnit(t) {
+  const p = planOf(t);
+  if (p === "free") return state.settings.freeSet;
+  return p === "box" ? state.settings.boxSet : state.settings.counterSet;
+}
 
 function totals(t, method) {
   const setAmount = setUnit(t) * t.people * t.sets;
@@ -332,6 +340,8 @@ function overMinutes(t) {
   const limit = state.settings.setMinutes * t.sets;
   return minutesSince(t.openedAt) - limit;
 }
+
+function isFree(t) { return planOf(t) === "free"; }
 
 /* ============ render ============ */
 
@@ -364,10 +374,13 @@ function renderTables() {
       }
       const over = overMinutes(t);
       const sum = totals(t, "cash").total;
+      const status = isFree(t)
+        ? "フリータイム"
+        : (over >= 0 ? "延長 " + over + "分 超過" : "セット残 " + (-over) + "分");
       return `<button class="seat busy" data-act="go-ticket" data-id="${t.id}">
         <span class="no">${s.id}</span>
         <span class="meta">${t.people}名 ・ ${hhmm(t.openedAt)}〜 <span data-since="${t.openedAt}">${minutesSince(t.openedAt)}分</span></span>
-        <span class="meta ${over >= 0 ? "over" : ""}">${over >= 0 ? "延長 " + over + "分 超過" : "セット残 " + (-over) + "分"}</span>
+        <span class="meta ${!isFree(t) && over >= 0 ? "over" : ""}">${status}</span>
         <span class="amount">${yen(sum)}</span>
       </button>`;
     }).join("");
@@ -409,12 +422,13 @@ function renderTicket() {
         <span class="seatno">${t.seatId}</span>
         <button class="pill" data-act="people">${t.people}名 ✎</button>
         <span class="pill">${hhmm(t.openedAt)}〜 <span data-since="${t.openedAt}">${minutesSince(t.openedAt)}分</span></span>
-        <span class="pill ${over >= 0 ? "warn" : ""}">セット${t.sets} ${over >= 0 ? "／超過" + over + "分" : ""}</span>
+        <button class="pill" data-act="plan">${planLabel(planOf(t))} ✎</button>
+        ${isFree(t) ? "" : `<span class="pill ${over >= 0 ? "warn" : ""}">セット${t.sets} ${over >= 0 ? "／超過" + over + "分" : ""}</span>`}
       </div>
 
       <div class="line fixed">
-        <span class="nm">セット料金（${t.seatType === "box" ? "ボックス" : "カウンター"}）</span>
-        <span class="qty"><span>${t.people}名 × ${t.sets}</span></span>
+        <span class="nm">セット料金（${planLabel(planOf(t))}）</span>
+        <span class="qty"><span>${t.people}名${isFree(t) ? "" : " × " + t.sets}</span></span>
         <span class="amt">${yen(tt.setAmount)}</span>
       </div>
 
@@ -428,7 +442,7 @@ function renderTicket() {
       </div>
 
       <div class="actions">
-        <button class="btn ghost" data-act="extend">延長 +1</button>
+        ${isFree(t) ? "" : `<button class="btn ghost" data-act="extend">延長 +1</button>`}
         <button class="btn" data-act="checkout">お会計</button>
       </div>
       <div class="actions">
@@ -535,6 +549,7 @@ function renderSettings() {
       <h3 class="subhead" style="margin-top:0">料金・席</h3>
       ${num("カウンター セット料金", "counterSet", "円 / 1名")}
       ${num("ボックス セット料金", "boxSet", "円 / 1名")}
+      ${num("フリータイム セット料金", "freeSet", "円 / 1名")}
       ${num("セット時間", "setMinutes", "分")}
       ${num("カード手数料", "cardFeePct", "%")}
       ${num("TAX（サービス料）", "servicePct", "% ／ 0 なら非表示")}
@@ -614,6 +629,19 @@ function askPeople(initial, onOk) {
   });
 }
 
+function askPlan(current, onPick) {
+  const opts = [["counter", "カウンター"], ["box", "ボックス"], ["free", "フリータイム"]];
+  const list = opts.map(([k, label]) =>
+    `<button data-k="${k}" class="${k === current ? "sel" : ""}">${label}<br><small>${yen(
+      k === "free" ? state.settings.freeSet : k === "box" ? state.settings.boxSet : state.settings.counterSet
+    )}</small></button>`).join("");
+  openModal(`<h3>セットプラン</h3><div class="choices">${list}</div>
+    <div class="actions"><button class="btn ghost" data-x="cancel">やめる</button></div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.k) { closeModal(); onPick(btn.dataset.k); }
+  });
+}
+
 function askCast(onPick) {
   const list = state.settings.casts.map(c => `<button data-c="${esc(c)}">${esc(c)}</button>`).join("");
   openModal(`<h3>どのキャスト？</h3><div class="choices">${list}
@@ -672,7 +700,7 @@ function newTicket(seatId, type, people) {
   const t = {
     id: "t" + Date.now() + Math.random().toString(36).slice(2, 6),
     no: state.seq++,
-    seatId, seatType: type, people, sets: 1,
+    seatId, seatType: type, plan: type, people, sets: 1,
     openedAt: Date.now(), closedAt: null,
     items: [], status: "open", payment: null,
   };
@@ -709,7 +737,7 @@ function csv(tickets, filename) {
     const base = [dayKey(t.closedAt), t.no, t.seatId, t.people, hhmm(t.openedAt), hhmm(t.closedAt),
       t.payment.method === "card" ? "カード" : "現金",
       t.payment.subtotal, t.payment.service, t.payment.cardFee, t.payment.total];
-    rows.push(base.concat([`セット料金（${t.seatType === "box" ? "ボックス" : "カウンター"}）`, t.people * t.sets, setUnit(t), ""]));
+    rows.push(base.concat([`セット料金（${planLabel(planOf(t))}）`, t.people * t.sets, setUnit(t), ""]));
     t.items.forEach(it => rows.push(base.concat([it.name, it.qty, it.price, it.cast || ""])));
   });
   const body = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
@@ -768,6 +796,11 @@ document.addEventListener("click", e => {
     return askPeople(1, n => newTicket(seat, type, n));
   }
   if (act === "people" && t) return askPeople(t.people, n => { t.people = n; save(); render(); });
+  if (act === "plan" && t) return askPlan(planOf(t), p => {
+    t.plan = p;
+    if (p === "free") t.sets = 1;
+    save(); render();
+  });
   if (act === "cat") { view.cat = el.dataset.cat; return render(); }
 
   if (act === "add" && t) {
