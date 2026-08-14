@@ -198,7 +198,7 @@
 const KEY = "blm-pos-v1";
 
 /* メニュー/料率を変更したら上げる。既存iPadの保存データを新しい既定値に入れ替える */
-const MENU_VERSION = 5;
+const MENU_VERSION = 7;
 
 function defaultMenu() {
   const m = (cat, name, price, backType) => ({ id: cat + ":" + name, cat, name, price, backType: backType || null });
@@ -215,7 +215,7 @@ function defaultMenu() {
     m("ショット", "コカボム", 1000),
     m("ショット", "ウォッカ", 1000),
     m("ショット", "イェガー", 1000),
-    m("ショット", "テキーラ観覧車 12杯", 15000),
+    m("ショット", "テキーラ観覧車", 15000),
     m("シャンパン", "オリシャン", 20000, "pct"),
     m("シャンパン", "オリシャン ロゼ", 40000, "pct"),
     m("シャンパン", "ヴーヴ イエロー", 30000, "pct"),
