@@ -198,7 +198,7 @@
 const KEY = "blm-pos-v1";
 
 /* メニュー/料率を変更したら上げる。既存iPadの保存データを新しい既定値に入れ替える */
-const MENU_VERSION = 7;
+const MENU_VERSION = 8;
 
 function defaultMenu() {
   const m = (cat, name, price, backType) => ({ id: cat + ":" + name, cat, name, price, backType: backType || null });
@@ -224,10 +224,14 @@ function defaultMenu() {
     m("シャンパン", "ベルエポック", 80000, "pct"),
     m("シャンパン", "アルマンド", 120000, "pct"),
     m("シャンパン", "エンジェル", 180000, "pct"),
-    m("ボトル", "黒霧島", 10000),
-    m("ボトル", "吉四六", 12000),
+    m("ボトル", "黒霧島", 12000),
+    m("ボトル", "吉四六", 14000),
     m("ボトル", "茉莉花", 10000),
     m("ボトル", "サントリー 角", 12000),
+    m("ボトル", "白州", null),
+    m("ボトル", "山崎", null),
+    m("ボトル", "響 17年", null),
+    m("ボトル", "マッカラン 17年", null),
     m("ソフトドリンク", "コーラ", 700),
     m("ソフトドリンク", "オレンジ", 700),
     m("ソフトドリンク", "アップル", 700),
@@ -413,7 +417,7 @@ function renderTicket() {
 
   const items = state.menu.filter(m => m.cat === view.cat).map(m =>
     `<button class="item" data-act="add" data-id="${esc(m.id)}">
-      <span class="nm">${esc(m.name)}</span><span class="pr">${yen(m.price)}</span>
+      <span class="nm">${esc(m.name)}</span><span class="pr">${m.price === null ? "ASK" : yen(m.price)}</span>
     </button>`).join("");
 
   app.innerHTML = `
@@ -538,7 +542,7 @@ function renderSettings() {
   const menuRows = state.menu.map((m, i) => `<tr>
       <td>${esc(m.cat)}</td>
       <td><input type="text" data-menu-name="${i}" value="${esc(m.name)}" class="wide"></td>
-      <td class="num"><input type="number" data-menu-price="${i}" value="${m.price}"></td>
+      <td class="num"><input type="number" data-menu-price="${i}" value="${m.price ?? ""}" placeholder="ASK"></td>
       <td>${m.backType ? "バック対象" : ""}</td>
       <td><button class="linkish" data-act="del-menu" data-i="${i}">削除</button></td>
     </tr>`).join("");
@@ -711,8 +715,18 @@ function newTicket(seatId, type, people) {
   render();
 }
 
+/* ASK 品の金額をその場で確定する。キャンセルなら null を返して打ち込みを中止 */
+function askPrice(m) {
+  const input = prompt(m.name + " の金額（数字のみ）", "20000");
+  if (input === null) return null;
+  const price = Number(String(input).replace(/[^0-9]/g, ""));
+  if (!price) { alert("金額が読み取れませんでした。"); return null; }
+  return { ...m, price };
+}
+
 function addItem(t, menuItem, cast) {
-  const same = t.items.find(it => it.menuId === menuItem.id && (it.cast || "") === (cast || ""));
+  const same = t.items.find(it =>
+    it.menuId === menuItem.id && (it.cast || "") === (cast || "") && it.price === menuItem.price);
   if (same) same.qty += 1;
   else t.items.push({
     menuId: menuItem.id, name: menuItem.name, price: menuItem.price,
@@ -807,8 +821,11 @@ document.addEventListener("click", e => {
   if (act === "add" && t) {
     const m = state.menu.find(x => x.id === el.dataset.id);
     if (!m) return;
-    if (m.backType) return askCast(cast => addItem(t, m, cast));
-    return addItem(t, m, "");
+    /* ASK 品（時価）はその場で金額を入れてもらう */
+    const item = m.price === null ? askPrice(m) : m;
+    if (!item) return;
+    if (item.backType) return askCast(cast => addItem(t, item, cast));
+    return addItem(t, item, "");
   }
   if (act === "qty" && t) {
     const i = Number(el.dataset.i);
@@ -874,7 +891,7 @@ document.addEventListener("change", e => {
   } else if (el.dataset.menuName !== undefined && el.dataset.menuName !== "") {
     state.menu[Number(el.dataset.menuName)].name = el.value;
   } else if (el.dataset.menuPrice !== undefined && el.dataset.menuPrice !== "") {
-    state.menu[Number(el.dataset.menuPrice)].price = Number(el.value) || 0;
+    state.menu[Number(el.dataset.menuPrice)].price = el.value === "" ? null : (Number(el.value) || 0);
   } else return;
   save();
 });
