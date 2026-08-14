@@ -254,6 +254,7 @@ function defaultState() {
     menu: defaultMenu(),
     menuVersion: MENU_VERSION,
     tickets: [],
+    expenses: [],
     seq: 1,
   };
 }
@@ -459,6 +460,9 @@ function renderTicket() {
     <div class="panel">
       <div class="cats">${cats.map(c =>
         `<button data-act="cat" data-cat="${esc(c)}" aria-current="${c === view.cat}">${esc(c)}</button>`).join("")}</div>
+      <div class="actions" style="margin:0 0 10px">
+        <button class="btn ghost" data-act="custom">＋ その他（名前と金額を入力）</button>
+      </div>
       <div class="items">${items}</div>
     </div>
   </div>`;
@@ -487,14 +491,35 @@ function renderReport() {
       </tr>`).join("")
     : `<tr><td colspan="7" class="tiny">本日の会計はまだありません</td></tr>`;
 
+  const exps = state.expenses.filter(e => e.date === today);
+  const expTotal = exps.reduce((a, e) => a + e.amount, 0);
+  const expRows = exps.length
+    ? exps.map(e => `<tr><td>${esc(e.name)}</td><td class="num">${yen(e.amount)}</td>
+        <td><button class="linkish" data-act="delete-expense" data-id="${e.id}">取消</button></td></tr>`).join("")
+    : `<tr><td colspan="3" class="tiny">本日の経費はまだありません</td></tr>`;
+
   app.innerHTML = `
     <h2 class="title">本日の売上 <span class="tiny">${today}</span></h2>
     <div class="kpis">
       <div class="kpi"><span>売上合計</span><b>${yen(sales)}</b></div>
+      <div class="kpi"><span>経費</span><b>${yen(expTotal)}</b></div>
+      <div class="kpi"><span>差引</span><b>${yen(sales - expTotal)}</b></div>
       <div class="kpi"><span>組数 / 客数</span><b>${closed.length} / ${guests}</b></div>
       <div class="kpi"><span>客単価</span><b>${guests ? yen(sales / guests) : "¥0"}</b></div>
       <div class="kpi"><span>現金</span><b>${yen(cash)}</b></div>
       <div class="kpi"><span>カード</span><b>${yen(card)}</b></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">経費（本日）</h3>
+      <div class="scroll"><table>
+        <tr><th>内容</th><th class="num">金額</th><th></th></tr>
+        ${expRows}
+      </table></div>
+      <div class="actions">
+        <button class="btn ghost" data-act="add-expense">＋ 経費を追加</button>
+        <button class="btn ghost" data-act="csv-expenses">経費をCSV出力</button>
+      </div>
     </div>
 
     <div class="panel" style="margin-bottom:16px">
@@ -634,6 +659,60 @@ function askPeople(initial, onOk) {
   });
 }
 
+/* 名前と金額をその場で入力する。ASK 品（名前は固定）と「その他」の両方で使う */
+function askCustom(opts, onOk) {
+  const { name = "", price = "", title = "その他の商品", lockName = false } = opts;
+  openModal(`
+    <h3>${esc(title)}</h3>
+    <p class="tiny" style="margin:0 0 6px">商品名</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="cn"
+           value="${esc(name)}" ${lockName ? "readonly" : ""} placeholder="例）マッカラン 25年">
+    <p class="tiny" style="margin:14px 0 6px">金額（円）</p>
+    <input class="pay-input" inputmode="numeric" id="cp" value="${price}" placeholder="0">
+    <div class="actions">
+      <button class="btn ghost" data-x="cancel">やめる</button>
+      <button class="btn" data-x="ok">伝票に追加</button>
+    </div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x !== "ok") return;
+    const nm = modalRoot.querySelector("#cn").value.trim();
+    const pr = Number(modalRoot.querySelector("#cp").value.replace(/[^0-9]/g, ""));
+    if (!nm) return alert("商品名を入れてください。");
+    if (!pr) return alert("金額を入れてください。");
+    closeModal();
+    onOk(nm, pr);
+  });
+  const first = modalRoot.querySelector(lockName ? "#cp" : "#cn");
+  if (first) first.focus();
+}
+
+/* 経費の入力。日付は既定で当日 */
+function askExpense(onOk) {
+  openModal(`
+    <h3>経費を追加</h3>
+    <p class="tiny" style="margin:0 0 6px">日付</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" type="date" id="ed" value="${dayKey(Date.now())}">
+    <p class="tiny" style="margin:14px 0 6px">内容</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="en" placeholder="例）おしぼり代・仕入れ・タクシー代">
+    <p class="tiny" style="margin:14px 0 6px">金額（円）</p>
+    <input class="pay-input" inputmode="numeric" id="ea" placeholder="0">
+    <div class="actions">
+      <button class="btn ghost" data-x="cancel">やめる</button>
+      <button class="btn" data-x="ok">記録する</button>
+    </div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x !== "ok") return;
+    const date = modalRoot.querySelector("#ed").value;
+    const name = modalRoot.querySelector("#en").value.trim();
+    const amount = Number(modalRoot.querySelector("#ea").value.replace(/[^0-9]/g, ""));
+    if (!date) return alert("日付を入れてください。");
+    if (!name) return alert("内容を入れてください。");
+    if (!amount) return alert("金額を入れてください。");
+    closeModal();
+    onOk({ id: "e" + Date.now() + Math.random().toString(36).slice(2, 5), date, name, amount });
+  });
+}
+
 function askPlan(current, onPick) {
   const opts = [["counter", "カウンター"], ["box", "ボックス"], ["free", "フリータイム"]];
   const list = opts.map(([k, label]) =>
@@ -715,15 +794,6 @@ function newTicket(seatId, type, people) {
   render();
 }
 
-/* ASK 品の金額をその場で確定する。キャンセルなら null を返して打ち込みを中止 */
-function askPrice(m) {
-  const input = prompt(m.name + " の金額（数字のみ）", "20000");
-  if (input === null) return null;
-  const price = Number(String(input).replace(/[^0-9]/g, ""));
-  if (!price) { alert("金額が読み取れませんでした。"); return null; }
-  return { ...m, price };
-}
-
 function addItem(t, menuItem, cast) {
   const same = t.items.find(it =>
     it.menuId === menuItem.id && (it.cast || "") === (cast || "") && it.price === menuItem.price);
@@ -755,13 +825,27 @@ function csv(tickets, filename) {
     rows.push(base.concat([`セット料金（${planLabel(planOf(t))}）`, t.people * t.sets, setUnit(t), ""]));
     t.items.forEach(it => rows.push(base.concat([it.name, it.qty, it.price, it.cast || ""])));
   });
-  const body = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
-  const blob = new Blob(["﻿" + body], { type: "text/csv;charset=utf-8" });
+  download(toCsv(rows), filename, "text/csv;charset=utf-8");
+}
+
+/* Excel が文字化けしないよう BOM を付ける */
+function toCsv(rows) {
+  return "﻿" + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+}
+
+function download(text, filename, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function csvExpenses() {
+  const rows = [["日付", "内容", "金額"]];
+  state.expenses.slice().sort((a, b) => a.date.localeCompare(b.date))
+    .forEach(e => rows.push([e.date, e.name, e.amount]));
+  download(toCsv(rows), "expenses-all.csv", "text/csv;charset=utf-8");
 }
 
 function exportJson() {
@@ -822,10 +906,16 @@ document.addEventListener("click", e => {
     const m = state.menu.find(x => x.id === el.dataset.id);
     if (!m) return;
     /* ASK 品（時価）はその場で金額を入れてもらう */
-    const item = m.price === null ? askPrice(m) : m;
-    if (!item) return;
-    if (item.backType) return askCast(cast => addItem(t, item, cast));
-    return addItem(t, item, "");
+    if (m.price === null) {
+      return askCustom({ name: m.name, lockName: true, title: m.name + " の金額" },
+        (nm, pr) => addItem(t, { ...m, price: pr }, ""));
+    }
+    if (m.backType) return askCast(cast => addItem(t, m, cast));
+    return addItem(t, m, "");
+  }
+  if (act === "custom" && t) {
+    return askCustom({}, (nm, pr) =>
+      addItem(t, { id: "custom:" + nm + ":" + pr, name: nm, price: pr, backType: null }, ""));
   }
   if (act === "qty" && t) {
     const i = Number(el.dataset.i);
@@ -845,6 +935,18 @@ document.addEventListener("click", e => {
     if (!confirm("この会計を取り消します。よろしいですか？")) return;
     state.tickets = state.tickets.filter(x => x.id !== el.dataset.id);
     save(); return render();
+  }
+  if (act === "add-expense") {
+    return askExpense(e => { state.expenses.push(e); save(); render(); });
+  }
+  if (act === "delete-expense") {
+    if (!confirm("この経費を取り消します。よろしいですか？")) return;
+    state.expenses = state.expenses.filter(x => x.id !== el.dataset.id);
+    save(); return render();
+  }
+  if (act === "csv-expenses") {
+    if (!state.expenses.length) return alert("経費データがありません。");
+    return csvExpenses();
   }
   if (act === "csv-today") {
     const today = dayKey(Date.now());
