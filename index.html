@@ -196,6 +196,9 @@
 
 const KEY = "blm-pos-v1";
 
+/* メニュー/料率を変更したら上げる。既存iPadの保存データを新しい既定値に入れ替える */
+const MENU_VERSION = 2;
+
 function defaultMenu() {
   const m = (cat, name, price, backType) => ({ id: cat + ":" + name, cat, name, price, backType: backType || null });
   return [
@@ -206,14 +209,20 @@ function defaultMenu() {
     m("アルコール", "瓶ビール", 1000),
     m("アルコール", "スラット", 1000),
     m("アルコール", "氷結", 1000),
-    m("ショット", "クライナー", 1000),
-    m("ショット", "クライナー ボトル", 10000),
     m("ショット", "テキーラ", 1000),
+    m("ショット", "クライナー", 1000),
+    m("ショット", "コカボム", 1000),
+    m("ショット", "ウォッカ", 1000),
+    m("ショット", "イェガー", 1000),
     m("ショット", "テキーラ観覧車 12杯", 11000),
     m("シャンパン", "オリシャン", 20000, "pct"),
-    m("シャンパン", "オリシャン ロゼ", 35000, "pct"),
-    m("シャンパン", "ヴーヴ・クリコ", 30000, "pct"),
+    m("シャンパン", "オリシャン ロゼ", 40000, "pct"),
+    m("シャンパン", "ヴーヴ イエロー", 30000, "pct"),
+    m("シャンパン", "ヴーヴ ホワイト", 35000, "pct"),
+    m("シャンパン", "ドンペリ", 50000, "pct"),
+    m("シャンパン", "ベルエポック", 70000, "pct"),
     m("シャンパン", "アルマンド", 120000, "pct"),
+    m("シャンパン", "エンジェル", 150000, "pct"),
     m("ボトル", "黒霧島", 10000),
     m("ボトル", "吉四六", 12000),
     m("ボトル", "茉莉花", 10000),
@@ -233,11 +242,12 @@ function defaultState() {
     settings: {
       counterSeats: 6, boxSeats: 4,
       counterSet: 2000, boxSet: 3000, setMinutes: 60,
-      cardFeePct: 10, servicePct: 0,
+      cardFeePct: 10, servicePct: 20,
       casts: ["キャストA", "キャストB", "キャストC"],
       back: { dohan: 1000, small: 500, large: 1000, pitcher: 1500, pct: 10 },
     },
     menu: defaultMenu(),
+    menuVersion: MENU_VERSION,
     tickets: [],
     seq: 1,
   };
@@ -251,11 +261,25 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
-    return Object.assign(defaultState(), parsed);
+    const st = Object.assign(defaultState(), parsed);
+    st.settings = Object.assign(defaultState().settings, parsed.settings || {});
+    st.settings.back = Object.assign(defaultState().settings.back, (parsed.settings || {}).back || {});
+    if (st.menuVersion !== MENU_VERSION) return migrate(st);
+    return st;
   } catch (e) {
     console.warn("state load failed, starting fresh", e);
     return defaultState();
   }
+}
+
+/* 保存済みの古いメニュー・料率を最新の既定値に入れ替える。売上履歴とキャスト設定は残す */
+function migrate(st) {
+  const d = defaultState();
+  st.menu = d.menu;
+  st.settings.servicePct = d.settings.servicePct;
+  st.settings.cardFeePct = d.settings.cardFeePct;
+  st.menuVersion = MENU_VERSION;
+  return st;
 }
 
 let saveFailed = false;
@@ -398,7 +422,7 @@ function renderTicket() {
 
       <div class="totals">
         <div><span>小計</span><span>${yen(tt.subtotal)}</span></div>
-        ${state.settings.servicePct ? `<div><span>サービス料 ${state.settings.servicePct}%</span><span>${yen(tt.service)}</span></div>` : ""}
+        ${state.settings.servicePct ? `<div><span>TAX ${state.settings.servicePct}%</span><span>${yen(tt.service)}</span></div>` : ""}
         <div class="grand"><span>合計（現金）</span><span>${yen(tt.total)}</span></div>
         <div><span>カード払いの場合（+${state.settings.cardFeePct}%）</span><span>${yen(totals(t, "card").total)}</span></div>
       </div>
@@ -513,7 +537,7 @@ function renderSettings() {
       ${num("ボックス セット料金", "boxSet", "円 / 1名")}
       ${num("セット時間", "setMinutes", "分")}
       ${num("カード手数料", "cardFeePct", "%")}
-      ${num("サービス料", "servicePct", "% ／ 0 なら非表示")}
+      ${num("TAX（サービス料）", "servicePct", "% ／ 0 なら非表示")}
       ${num("カウンター席数", "counterSeats", "席")}
       ${num("ボックス席数", "boxSeats", "卓")}
     </div>
@@ -615,7 +639,7 @@ function openCheckout(t) {
       </div>
       <div class="totals" style="margin-top:16px">
         <div><span>小計</span><span>${yen(tt.subtotal)}</span></div>
-        ${tt.service ? `<div><span>サービス料</span><span>${yen(tt.service)}</span></div>` : ""}
+        ${tt.service ? `<div><span>TAX ${state.settings.servicePct}%</span><span>${yen(tt.service)}</span></div>` : ""}
         ${tt.cardFee ? `<div><span>カード手数料 ${state.settings.cardFeePct}%</span><span>${yen(tt.cardFee)}</span></div>` : ""}
         <div class="grand"><span>合計</span><span>${yen(tt.total)}</span></div>
       </div>
@@ -679,7 +703,7 @@ function closeTicket(t, method) {
 }
 
 function csv(tickets, filename) {
-  const head = ["日付", "伝票No", "卓", "人数", "開始", "終了", "支払", "小計", "サービス料", "カード手数料", "合計", "商品", "数量", "単価", "キャスト"];
+  const head = ["日付", "伝票No", "卓", "人数", "開始", "終了", "支払", "小計", "TAX", "カード手数料", "合計", "商品", "数量", "単価", "キャスト"];
   const rows = [head];
   tickets.forEach(t => {
     const base = [dayKey(t.closedAt), t.no, t.seatId, t.people, hhmm(t.openedAt), hhmm(t.closedAt),
