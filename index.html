@@ -78,6 +78,7 @@
     padding:6px 12px; font-size:.8rem; color:var(--ink-soft); font-variant-numeric:tabular-nums;
   }
   .pill.warn { border-color:var(--warn); color:var(--warn); font-weight:700; }
+  .pill.on { border-color:var(--magenta); color:var(--magenta); font-weight:700; background:var(--blush); }
 
   .lines { display:flex; flex-direction:column; gap:2px; margin:6px 0 12px; max-height:46vh; overflow-y:auto; }
   .line { display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center; padding:8px 4px; border-bottom:1px dotted var(--rule); }
@@ -198,7 +199,7 @@
 const KEY = "blm-pos-v1";
 
 /* メニュー/料率を変更したら上げる。既存iPadの保存データを新しい既定値に入れ替える */
-const MENU_VERSION = 8;
+const MENU_VERSION = 9;
 
 function defaultMenu() {
   const m = (cat, name, price, backType) => ({ id: cat + ":" + name, cat, name, price, backType: backType || null });
@@ -248,8 +249,10 @@ function defaultState() {
       counterSeats: 6, boxSeats: 4,
       counterSet: 2000, boxSet: 3000, freeSet: 6000, setMinutes: 60,
       cardFeePct: 10, servicePct: 20,
-      casts: ["キャストA", "キャストB", "キャストC"],
+      casts: ["きみ", "まい", "さやか", "はな", "もえ"],
       back: { dohan: 1000, small: 500, large: 1000, pitcher: 1500, pct: 10 },
+      /* 指名バック（%）。シャンパン・ボトルは対象外 */
+      nominate: { normal: 10, self: 20, dohan: 30 },
     },
     menu: defaultMenu(),
     menuVersion: MENU_VERSION,
@@ -270,6 +273,7 @@ function load() {
     const st = Object.assign(defaultState(), parsed);
     st.settings = Object.assign(defaultState().settings, parsed.settings || {});
     st.settings.back = Object.assign(defaultState().settings.back, (parsed.settings || {}).back || {});
+    st.settings.nominate = Object.assign(defaultState().settings.nominate, (parsed.settings || {}).nominate || {});
     if (st.menuVersion !== MENU_VERSION) return migrate(st);
     return st;
   } catch (e) {
@@ -282,6 +286,8 @@ function load() {
 function migrate(st) {
   const d = defaultState();
   st.menu = d.menu;
+  /* 初期サンプルのままなら実際のキャスト名に入れ替える */
+  if (st.settings.casts.join() === "キャストA,キャストB,キャストC") st.settings.casts = d.settings.casts;
   st.settings.servicePct = d.settings.servicePct;
   st.settings.cardFeePct = d.settings.cardFeePct;
   st.menuVersion = MENU_VERSION;
@@ -427,6 +433,8 @@ function renderTicket() {
       <div class="ticket-head">
         <span class="seatno">${t.seatId}</span>
         <button class="pill" data-act="people">${t.people}名 ✎</button>
+        <button class="pill ${t.nominee ? "on" : ""}" data-act="nominee">指名 ${t.nominee || "なし"} ✎</button>
+        <button class="pill" data-act="origin">${originLabel(t.origin)} ✎</button>
         <span class="pill">${hhmm(t.openedAt)}〜 <span data-since="${t.openedAt}">${minutesSince(t.openedAt)}分</span></span>
         <button class="pill" data-act="plan">${planLabel(planOf(t))} ✎</button>
         ${isFree(t) ? "" : `<span class="pill ${over >= 0 ? "warn" : ""}">セット${t.sets} ${over >= 0 ? "／超過" + over + "分" : ""}</span>`}
@@ -476,14 +484,24 @@ function renderReport() {
   const cash = closed.filter(t => t.payment.method === "cash").reduce((a, t) => a + t.payment.total, 0);
   const card = closed.filter(t => t.payment.method === "card").reduce((a, t) => a + t.payment.total, 0);
 
-  const backs = castBacks(closed);
+  const backs = castSummary(closed);
   const backRows = backs.length
-    ? backs.map(b => `<tr><td>${esc(b.cast)}</td><td class="num">${b.count}</td><td class="num">${yen(b.sales)}</td><td class="num">${yen(b.back)}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="tiny">キャスト指定の売上はまだありません</td></tr>`;
+    ? backs.map(b => `<tr>
+        <td>${esc(b.cast)}</td>
+        <td class="num">${b.groups}</td>
+        <td class="num">${yen(b.nomSales)}</td>
+        <td class="num">${yen(b.nomBack)}</td>
+        <td class="num">${b.count}</td>
+        <td class="num">${yen(b.drinkBack)}</td>
+        <td class="num"><b>${yen(b.total)}</b></td>
+      </tr>`).join("")
+    : `<tr><td colspan="7" class="tiny">指名・キャスト指定の売上はまだありません</td></tr>`;
 
   const rows = closed.length
     ? closed.slice().reverse().map(t => `<tr>
-        <td>#${t.no}</td><td>${t.seatId}</td><td class="num">${t.people}</td>
+        <td>#${t.no}</td><td>${t.seatId}</td>
+        <td>${t.nominee ? esc(t.nominee) + (t.origin && t.origin !== "normal" ? `<small style="color:#E0369F"> ${originLabel(t.origin)}</small>` : "") : "—"}</td>
+        <td class="num">${t.people}</td>
         <td>${hhmm(t.openedAt)}–${hhmm(t.closedAt)}</td>
         <td>${t.payment.method === "card" ? "カード" : "現金"}</td>
         <td class="num">${yen(t.payment.total)}</td>
@@ -525,7 +543,8 @@ function renderReport() {
     <div class="panel" style="margin-bottom:16px">
       <h3 class="subhead" style="margin-top:0">キャスト別（本日）</h3>
       <div class="scroll"><table>
-        <tr><th>キャスト</th><th class="num">本数</th><th class="num">売上</th><th class="num">バック</th></tr>
+        <tr><th>キャスト</th><th class="num">指名</th><th class="num">指名売上</th><th class="num">指名バック</th>
+            <th class="num">ドリンク</th><th class="num">ドリンクバック</th><th class="num">バック計</th></tr>
         ${backRows}
       </table></div>
     </div>
@@ -533,7 +552,7 @@ function renderReport() {
     <div class="panel">
       <h3 class="subhead" style="margin-top:0">伝票一覧</h3>
       <div class="scroll"><table>
-        <tr><th>No</th><th>卓</th><th class="num">人数</th><th>時間</th><th>支払</th><th class="num">金額</th><th></th></tr>
+        <tr><th>No</th><th>卓</th><th>指名</th><th class="num">人数</th><th>時間</th><th>支払</th><th class="num">金額</th><th></th></tr>
         ${rows}
       </table></div>
       <div class="actions">
@@ -543,24 +562,51 @@ function renderReport() {
     </div>`;
 }
 
-function castBacks(tickets) {
+/* 指名バックの対象売上。シャンパンとボトルは専用バックがあるので除外する */
+function nominateBase(t) {
+  const excluded = ["シャンパン", "ボトル"];
+  const items = t.items.filter(it => !excluded.includes(it.cat || String(it.menuId).split(":")[0]));
+  return setUnit(t) * t.people * t.sets + items.reduce((a, it) => a + it.price * it.qty, 0);
+}
+
+function castSummary(tickets) {
   const map = new Map();
   const rate = state.settings.back;
-  tickets.forEach(t => t.items.forEach(it => {
-    if (!it.cast || !it.backType) return;
-    const amount = it.price * it.qty;
-    const back = it.backType === "pct" ? Math.round(amount * rate.pct / 100) : (rate[it.backType] || 0) * it.qty;
-    const cur = map.get(it.cast) || { cast: it.cast, count: 0, sales: 0, back: 0 };
-    cur.count += it.qty; cur.sales += amount; cur.back += back;
-    map.set(it.cast, cur);
-  }));
-  return [...map.values()].sort((a, b) => b.back - a.back);
+  const get = n => {
+    if (!map.has(n)) map.set(n, { cast: n, groups: 0, nomSales: 0, nomBack: 0, count: 0, drinkBack: 0 });
+    return map.get(n);
+  };
+
+  tickets.forEach(t => {
+    if (t.nominee) {
+      const base = nominateBase(t);
+      const pct = state.settings.nominate[t.origin || "normal"] || 0;
+      const c = get(t.nominee);
+      c.groups += 1;
+      c.nomSales += base;
+      c.nomBack += Math.round(base * pct / 100);
+    }
+    t.items.forEach(it => {
+      if (!it.cast || !it.backType) return;
+      const amount = it.price * it.qty;
+      const back = it.backType === "pct" ? Math.round(amount * rate.pct / 100) : (rate[it.backType] || 0) * it.qty;
+      const c = get(it.cast);
+      c.count += it.qty;
+      c.drinkBack += back;
+    });
+  });
+
+  return [...map.values()]
+    .map(c => ({ ...c, total: c.nomBack + c.drinkBack }))
+    .sort((a, b) => b.total - a.total);
 }
 
 function renderSettings() {
   const s = state.settings;
   const num = (label, key, suffix) =>
     `<div class="field"><label>${label}</label><input type="number" data-set="${key}" value="${s[key]}"><span class="tiny">${suffix || ""}</span></div>`;
+  const nomNum = (label, key) =>
+    `<div class="field"><label>${label}</label><input type="number" data-nom="${key}" value="${s.nominate[key]}"><span class="tiny">%（シャンパン・ボトルは対象外）</span></div>`;
   const backNum = (label, key, suffix) =>
     `<div class="field"><label>${label}</label><input type="number" data-back="${key}" value="${s.back[key]}"><span class="tiny">${suffix || "円 / 1杯"}</span></div>`;
 
@@ -594,6 +640,9 @@ function renderSettings() {
       ${backNum("ドリンク 大", "large")}
       ${backNum("ピッチャー", "pitcher")}
       ${backNum("シャンパン", "pct", "%（売価に対して）")}
+      ${nomNum("指名バック 通常客", "normal")}
+      ${nomNum("指名バック 自分呼び", "self")}
+      ${nomNum("指名バック 同伴", "dohan")}
       <div class="field">
         <label>キャスト名（カンマ区切り）</label>
         <input type="text" class="wide" data-casts value="${esc(s.casts.join(", "))}">
@@ -726,15 +775,49 @@ function askPlan(current, onPick) {
   });
 }
 
-function askCast(onPick) {
+function askCast(onPick, title) {
   const list = state.settings.casts.map(c => `<button data-c="${esc(c)}">${esc(c)}</button>`).join("");
-  openModal(`<h3>どのキャスト？</h3><div class="choices">${list}
+  openModal(`<h3>${esc(title || "どのキャスト？")}</h3><div class="choices">${list}
+    <button data-other="1">その他（入力）</button>
     <button data-c="">指定なし</button></div>
     <div class="actions"><button class="btn ghost" data-x="cancel">やめる</button></div>`, btn => {
     if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.other) { closeModal(); return askName("キャスト名を入力", onPick); }
     if (btn.dataset.c !== undefined) { closeModal(); onPick(btn.dataset.c); }
   });
 }
+
+/* 登録外のキャスト名をその場で入れる。入れた名前は一覧にも追加して次から選べるようにする */
+function askName(title, onOk) {
+  openModal(`
+    <h3>${esc(title)}</h3>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="nm" placeholder="例）ヘルプの子">
+    <div class="actions">
+      <button class="btn ghost" data-x="cancel">やめる</button>
+      <button class="btn" data-x="ok">決定</button>
+    </div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x !== "ok") return;
+    const nm = modalRoot.querySelector("#nm").value.trim();
+    if (!nm) return alert("名前を入れてください。");
+    if (!state.settings.casts.includes(nm)) state.settings.casts.push(nm);
+    closeModal();
+    onOk(nm);
+  });
+}
+
+function askOrigin(current, onPick) {
+  const n = state.settings.nominate;
+  const opts = [["normal", "通常客", n.normal], ["self", "自分呼び", n.self], ["dohan", "同伴", n.dohan]];
+  openModal(`<h3>お客さんの区分</h3><div class="choices">${opts.map(([k, label, pct]) =>
+    `<button data-k="${k}" class="${k === current ? "sel" : ""}">${label}<br><small>バック ${pct}%</small></button>`).join("")}</div>
+    <div class="actions"><button class="btn ghost" data-x="cancel">やめる</button></div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.k) { closeModal(); onPick(btn.dataset.k); }
+  });
+}
+
+function originLabel(o) { return o === "self" ? "自分呼び" : o === "dohan" ? "同伴" : "通常客"; }
 
 function openCheckout(t) {
   let method = "cash";
@@ -785,6 +868,7 @@ function newTicket(seatId, type, people) {
     id: "t" + Date.now() + Math.random().toString(36).slice(2, 6),
     no: state.seq++,
     seatId, seatType: type, plan: type, people, sets: 1,
+    nominee: "", origin: "normal",
     openedAt: Date.now(), closedAt: null,
     items: [], status: "open", payment: null,
   };
@@ -800,6 +884,7 @@ function addItem(t, menuItem, cast) {
   if (same) same.qty += 1;
   else t.items.push({
     menuId: menuItem.id, name: menuItem.name, price: menuItem.price,
+    cat: menuItem.cat || String(menuItem.id).split(":")[0],
     qty: 1, cast: cast || "", backType: menuItem.backType,
   });
   save(); render();
@@ -816,10 +901,10 @@ function closeTicket(t, method) {
 }
 
 function csv(tickets, filename) {
-  const head = ["日付", "伝票No", "卓", "人数", "開始", "終了", "支払", "小計", "TAX", "カード手数料", "合計", "商品", "数量", "単価", "キャスト"];
+  const head = ["日付", "伝票No", "卓", "指名", "区分", "人数", "開始", "終了", "支払", "小計", "TAX", "カード手数料", "合計", "商品", "数量", "単価", "キャスト"];
   const rows = [head];
   tickets.forEach(t => {
-    const base = [dayKey(t.closedAt), t.no, t.seatId, t.people, hhmm(t.openedAt), hhmm(t.closedAt),
+    const base = [dayKey(t.closedAt), t.no, t.seatId, t.nominee || "", originLabel(t.origin), t.people, hhmm(t.openedAt), hhmm(t.closedAt),
       t.payment.method === "card" ? "カード" : "現金",
       t.payment.subtotal, t.payment.service, t.payment.cardFee, t.payment.total];
     rows.push(base.concat([`セット料金（${planLabel(planOf(t))}）`, t.people * t.sets, setUnit(t), ""]));
@@ -895,6 +980,8 @@ document.addEventListener("click", e => {
     return askPeople(1, n => newTicket(seat, type, n));
   }
   if (act === "people" && t) return askPeople(t.people, n => { t.people = n; save(); render(); });
+  if (act === "nominee" && t) return askCast(c => { t.nominee = c; save(); render(); }, "誰の指名？");
+  if (act === "origin" && t) return askOrigin(t.origin, o => { t.origin = o; save(); render(); });
   if (act === "plan" && t) return askPlan(planOf(t), p => {
     t.plan = p;
     if (p === "free") t.sets = 1;
@@ -988,6 +1075,8 @@ document.addEventListener("change", e => {
     state.settings[el.dataset.set] = Number(el.value) || 0;
   } else if (el.dataset.back !== undefined && el.dataset.back !== "") {
     state.settings.back[el.dataset.back] = Number(el.value) || 0;
+  } else if (el.dataset.nom !== undefined && el.dataset.nom !== "") {
+    state.settings.nominate[el.dataset.nom] = Number(el.value) || 0;
   } else if (el.hasAttribute("data-casts")) {
     state.settings.casts = el.value.split(",").map(s => s.trim()).filter(Boolean);
   } else if (el.dataset.menuName !== undefined && el.dataset.menuName !== "") {
