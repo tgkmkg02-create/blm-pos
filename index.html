@@ -672,6 +672,19 @@ function renderPayroll() {
   const expTotal = exps.reduce((a, e) => a + e.amount, 0);
   const pay = payroll(m);
   const payTotal = pay.reduce((a, r) => a + r.pay, 0);
+  const sum = k => pay.reduce((a, r) => a + (r[k] || 0), 0);
+  const totalRow = pay.length ? `<tr style="background:var(--blush)">
+      <td><b>合計（人件費）</b></td>
+      <td class="num"><b>${sum("days")}</b></td>
+      <td class="num"><b>${sum("hours")}</b></td>
+      <td class="num"><b>${yen(sum("wage"))}</b></td>
+      <td class="num"><b>${yen(sum("back"))}</b></td>
+      <td class="num"><b>${sum("adj") ? yen(sum("adj")) : "—"}</b></td>
+      <td class="num"><b>${yen(sum("gross"))}</b></td>
+      <td class="num"><b>${sum("deduct") ? "−" + yen(sum("deduct")) : "—"}</b></td>
+      <td class="num"><b>${yen(payTotal)}</b></td>
+      <td></td>
+    </tr>` : "";
 
   const payRows = pay.length ? pay.map(r => `<tr>
       <td>${esc(r.cast)}${r.edited ? ` <small style="color:var(--magenta)">手修正</small>` : ""}</td>
@@ -721,7 +734,7 @@ function renderPayroll() {
     <div class="kpis">
       <div class="kpi"><span>売上</span><b>${yen(sales)}</b></div>
       <div class="kpi"><span>経費</span><b>${yen(expTotal)}</b></div>
-      <div class="kpi"><span>給与</span><b>${yen(payTotal)}</b></div>
+      <div class="kpi"><span>人件費</span><b>${yen(payTotal)}</b></div>
       <div class="kpi"><span>差引</span><b>${yen(sales - expTotal - payTotal)}</b></div>
     </div>
 
@@ -732,7 +745,9 @@ function renderPayroll() {
             <th class="num">バック</th><th class="num">手当控除</th><th class="num">総支給</th>
             <th class="num">控除</th><th class="num">差引支給額</th><th></th></tr>
         ${payRows}
+        ${totalRow}
       </table></div>
+      <p class="tiny" style="margin-top:10px">人件費 <b>${yen(payTotal)}</b>${sales ? `　／　売上比 <b>${Math.round(payTotal / sales * 1000) / 10}%</b>` : ""}</p>
       <div class="actions">
         <button class="btn ghost" data-act="add-shift">＋ 出勤を追加</button>
         <button class="btn ghost" data-act="add-adj">＋ 手当・控除</button>
