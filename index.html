@@ -44,6 +44,7 @@
   .clock { font-variant-numeric:tabular-nums; color:var(--ink-soft); font-size:.85rem; }
 
   main { padding:16px; max-width:1400px; margin:0 auto; }
+  .panel, .kpi { min-width:0; }
   h2.title { margin:0 0 14px; font-size:1.05rem; letter-spacing:.06em; }
 
   /* ---------- seats ---------- */
@@ -149,6 +150,75 @@
   }
   .field input[type="text"].wide { width:min(340px,100%); }
   .subhead { margin:22px 0 10px; font-size:.74rem; letter-spacing:.2em; color:var(--magenta); }
+
+
+  .sum { background:var(--blush); }
+
+  .bars { display:flex; flex-direction:column; gap:9px; margin-top:14px; }
+  .bar { display:grid; grid-template-columns:78px 1fr auto; align-items:center; gap:10px; }
+  .bar .bl { font-size:.84rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar .bt { height:14px; background:var(--blush); border-radius:999px; overflow:hidden; }
+  .bar .bt i { display:block; height:100%; background:var(--grad); border-radius:999px; }
+  .bar .bv { font-size:.84rem; font-weight:700; font-variant-numeric:tabular-nums; }
+
+  /* ---------- スマホ ---------- */
+  @media (max-width: 640px) {
+    html { -webkit-text-size-adjust:100%; }
+
+    .topbar { gap:8px; padding:8px 10px; overflow-x:auto; }
+    .brand { margin-right:2px; }
+    .brand b, .clock { display:none; }
+    .nav { gap:5px; }
+    .nav button { padding:8px 12px; font-size:.82rem; }
+
+    main { padding:10px; }
+    h2.title { font-size:1rem; }
+
+    .kpis { grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+    .kpi { padding:10px 11px; border-radius:14px; }
+    .kpi b { font-size:1.06rem; overflow-wrap:anywhere; }
+    .kpi span { font-size:.66rem; letter-spacing:.1em; }
+
+    .panel { padding:11px; border-radius:14px; }
+    .actions { flex-wrap:wrap; gap:7px; }
+    .actions .btn { flex:1 1 46%; min-height:48px; font-size:.86rem; padding:12px 8px; }
+
+    table { font-size:.78rem; }
+    th, td { padding:7px 6px; }
+    th { font-size:.62rem; letter-spacing:.06em; }
+    /* 横スクロールしても名前の列は残す */
+    .scroll { -webkit-overflow-scrolling:touch; }
+    .scroll table { white-space:nowrap; }
+    .scroll table th:first-child,
+    .scroll table td:first-child { position:sticky; left:0; background:var(--card); z-index:1; }
+    .scroll table tr.sum th:first-child,
+    .scroll table tr.sum td:first-child { background:var(--blush); }
+
+    .seats { grid-template-columns:repeat(auto-fill,minmax(138px,1fr)); gap:9px; }
+    .seat { min-height:94px; padding:11px 12px; }
+    .seat .no { font-size:1.02rem; }
+    .seat .amount { font-size:1rem; }
+
+    .items { grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:8px; }
+    .item { min-height:64px; padding:10px; }
+    .cats button { padding:8px 12px; font-size:.8rem; }
+
+    .ticket-head { gap:6px; }
+    .pill { padding:5px 10px; font-size:.74rem; }
+    .lines { max-height:38vh; }
+    .totals div.grand { font-size:1.1rem; }
+
+    .backdrop { padding:10px; align-items:flex-start; }
+    .modal { padding:16px; border-radius:18px; max-height:94vh; margin-top:8px; }
+    .stepper button { width:54px; height:54px; }
+    .choices { grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); }
+    .line .qty button { width:32px; height:32px; }
+    .field label { min-width:150px; font-size:.82rem; }
+    .field input[type="number"], .field input[type="text"] { width:110px; }
+    .field input[type="text"].wide { width:100%; }
+    .bar { grid-template-columns:62px 1fr auto; gap:8px; }
+    .bar .bl, .bar .bv { font-size:.76rem; }
+  }
 
   /* ---------- modal ---------- */
   .backdrop {
@@ -260,6 +330,7 @@ function defaultState() {
       wages: { さやか: 2500, まい: 2000, もえ: 1500, りね: 1500, まひろ: 1500 },
       expenseCats: ["仕入れ", "おしぼり", "家賃", "カラオケ", "光熱費", "消耗品", "広告", "その他"],
       staff: ["ふみや", "きみ", "さやか", "まい", "もえ", "りね", "まひろ"],
+      fixedCosts: [{ name: "家賃", cat: "家賃", amount: 230000 }, { name: "カラオケ", cat: "カラオケ", amount: 45000 }],
     },
     menu: defaultMenu(),
     menuVersion: MENU_VERSION,
@@ -269,6 +340,7 @@ function defaultState() {
     adjustments: [],
     manualSales: [],
     payOverrides: [],
+    fixedApplied: [],
     seq: 1,
   };
 }
@@ -665,8 +737,26 @@ function applyOverride(c, m) {
 const editBtn = (act, id) =>
   `<button class="linkish" style="color:var(--magenta)" data-act="${act}" data-id="${id}">編集</button> `;
 
+/* 毎月の固定費をその月の経費として1回だけ自動計上する（消した分は再登録しない） */
+function applyFixedCosts(m) {
+  if (m > monthKey(dayKey(Date.now()))) return;
+  let added = false;
+  (state.settings.fixedCosts || []).forEach(f => {
+    const key = m + "|" + f.name;
+    if (state.fixedApplied.includes(key)) return;
+    state.expenses.push({
+      id: "f" + Date.now() + Math.random().toString(36).slice(2, 5),
+      date: m + "-01", cat: f.cat || "その他", name: f.name + "（固定費）", amount: f.amount, fixed: true,
+    });
+    state.fixedApplied.push(key);
+    added = true;
+  });
+  if (added) save();
+}
+
 function renderPayroll() {
   const m = currentMonth();
+  applyFixedCosts(m);
   const posSales = monthTickets(m).reduce((a, t) => a + t.payment.total, 0);
   const manual = monthOf(state.manualSales, m);
   const manualTotal = manual.reduce((a, x) => a + x.amount, 0);
@@ -678,7 +768,7 @@ function renderPayroll() {
   const totalCost = expTotal + payTotal;
   const profit = sales - totalCost;
   const sum = k => pay.reduce((a, r) => a + (r[k] || 0), 0);
-  const totalRow = pay.length ? `<tr style="background:var(--blush)">
+  const totalRow = pay.length ? `<tr class="sum">
       <td><b>合計（人件費）</b></td>
       <td class="num"><b>${sum("days")}</b></td>
       <td class="num"><b>${sum("hours")}</b></td>
@@ -741,13 +831,20 @@ function renderPayroll() {
       <td class="num"><b>${yen(p.total)}</b></td>
       <td class="num tiny">${sales ? Math.round(p.total / sales * 1000) / 10 + "%" : "—"}</td>
     </tr>`).join("") : `<tr><td colspan="5" class="tiny">この月の売上はまだありません</td></tr>`)
-    + (perList.length ? `<tr style="background:var(--blush)"><td><b>総売上</b></td>
+    + (perList.length ? `<tr class="sum"><td><b>総売上</b></td>
         <td class="num"><b>${yen(posSales)}</b></td><td class="num"><b>${yen(manualTotal)}</b></td>
         <td class="num"><b>${yen(sales)}</b></td><td></td></tr>` : "");
 
+  const maxTotal = Math.max(1, ...perList.map(p => p.total));
+  const perBars = perList.map(p => `<div class="bar">
+      <span class="bl">${esc(p.name)}</span>
+      <span class="bt"><i style="width:${Math.round(p.total / maxTotal * 100)}%"></i></span>
+      <span class="bv">${yen(p.total)}</span>
+    </div>`).join("");
+
   const catTotals = [...exps.reduce((m2, e) => m2.set(e.cat || "その他", (m2.get(e.cat || "その他") || 0) + e.amount), new Map())]
     .sort((a, b) => b[1] - a[1]);
-  const expTotalRow = exps.length ? `<tr style="background:var(--blush)">
+  const expTotalRow = exps.length ? `<tr class="sum">
       <td colspan="3"><b>経費 合計</b></td><td class="num"><b>${yen(expTotal)}</b></td><td></td></tr>` : "";
   const catSummary = catTotals.length
     ? `<p class="tiny" style="margin-top:10px">費目別　${catTotals.map(([c, v]) => `${esc(c)} ${yen(v)}`).join("　／　")}</p>`
@@ -780,7 +877,7 @@ function renderPayroll() {
         <tr><td><b>売上 合計</b></td><td class="num"><b>${yen(sales)}</b></td></tr>
         <tr><td>経費 合計</td><td class="num">−${yen(expTotal)}</td></tr>
         <tr><td>人件費 合計</td><td class="num">−${yen(payTotal)}</td></tr>
-        <tr style="background:var(--blush)"><td><b>総経費</b></td><td class="num"><b>−${yen(totalCost)}</b></td></tr>
+        <tr class="sum"><td><b>総経費</b></td><td class="num"><b>−${yen(totalCost)}</b></td></tr>
         <tr><td style="font-size:1.05rem"><b>残り（利益）</b></td>
             <td class="num" style="font-size:1.15rem; color:${profit < 0 ? "var(--danger)" : "var(--ok)"}"><b>${yen(profit)}</b></td></tr>
         ${sales ? `<tr><td class="tiny">利益率</td><td class="num tiny">${Math.round(profit / sales * 1000) / 10}%</td></tr>` : ""}
@@ -793,6 +890,7 @@ function renderPayroll() {
         <tr><th>名前</th><th class="num">レジ売上</th><th class="num">手入力</th><th class="num">合計</th><th class="num">構成比</th></tr>
         ${perPersonRows}
       </table></div>
+      ${perList.length ? `<div class="bars">${perBars}</div>` : ""}
     </div>
 
     <div class="panel" style="margin-bottom:16px">
@@ -1112,6 +1210,17 @@ function renderSettings() {
         <label>経費の費目（カンマ区切り）</label>
         <input type="text" class="wide" data-expcats value="${esc(s.expenseCats.join(", "))}">
       </div>
+      <h3 class="subhead">毎月の固定費（月を開くと自動で経費に入ります）</h3>
+      ${s.fixedCosts.map((f, i) => `<div class="field">
+        <input type="text" data-fixname="${i}" value="${esc(f.name)}" style="width:150px">
+        <input type="number" data-fixamt="${i}" value="${f.amount}">
+        <span class="tiny">円 / 月</span>
+        <button class="linkish" data-act="del-fixed" data-i="${i}">削除</button>
+      </div>`).join("")}
+      <div class="actions" style="margin-bottom:14px">
+        <button class="btn ghost" data-act="add-fixed">＋ 固定費を追加</button>
+      </div>
+
       <div class="field">
         <label>担当者（売上の手入力で選ぶ名前）</label>
         <input type="text" class="wide" data-staff value="${esc(s.staff.join(", "))}">
@@ -1535,6 +1644,18 @@ document.addEventListener("click", e => {
     return csv(list, "sales-all.csv");
   }
 
+  if (act === "add-fixed") {
+    const name = prompt("固定費の名前", "光熱費");
+    if (!name) return;
+    const amount = Number(prompt("金額（数字のみ）", "30000"));
+    if (!amount) return;
+    state.settings.fixedCosts.push({ name, cat: name, amount });
+    save(); return render();
+  }
+  if (act === "del-fixed") {
+    state.settings.fixedCosts.splice(Number(el.dataset.i), 1);
+    save(); return render();
+  }
   if (act === "add-menu") {
     const cat = prompt("カテゴリ名", view.cat || "その他");
     if (!cat) return;
@@ -1584,6 +1705,10 @@ document.addEventListener("change", e => {
     state.settings.expenseCats = el.value.split(",").map(s => s.trim()).filter(Boolean);
   } else if (el.hasAttribute("data-staff")) {
     state.settings.staff = el.value.split(",").map(s => s.trim()).filter(Boolean);
+  } else if (el.dataset.fixname !== undefined && el.dataset.fixname !== "") {
+    state.settings.fixedCosts[Number(el.dataset.fixname)].name = el.value;
+  } else if (el.dataset.fixamt !== undefined && el.dataset.fixamt !== "") {
+    state.settings.fixedCosts[Number(el.dataset.fixamt)].amount = Number(el.value) || 0;
   } else if (el.dataset.wage !== undefined && el.dataset.wage !== "") {
     state.settings.wages[el.dataset.wage] = Number(el.value) || 0;
   } else if (el.hasAttribute("data-month")) {
