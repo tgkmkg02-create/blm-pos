@@ -259,6 +259,7 @@ function defaultState() {
       deductPct: 10,
       wages: { さやか: 2500, まい: 2000, もえ: 1500, りね: 1500, まひろ: 1500 },
       expenseCats: ["仕入れ", "おしぼり", "家賃", "カラオケ", "光熱費", "消耗品", "広告", "その他"],
+      staff: ["ふみや", "きみ", "さやか", "まい", "もえ", "りね", "まひろ"],
     },
     menu: defaultMenu(),
     menuVersion: MENU_VERSION,
@@ -549,7 +550,9 @@ function renderReport() {
       <div class="scroll"><table>
         <tr><th>内容</th><th class="num">金額</th><th></th></tr>
         ${expRows}
+        ${expTotalRow}
       </table></div>
+      ${catSummary}
       <div class="actions">
         <button class="btn ghost" data-act="add-expense">＋ 経費を追加</button>
         <button class="btn ghost" data-act="csv-expenses">経費をCSV出力</button>
@@ -672,6 +675,8 @@ function renderPayroll() {
   const expTotal = exps.reduce((a, e) => a + e.amount, 0);
   const pay = payroll(m);
   const payTotal = pay.reduce((a, r) => a + r.pay, 0);
+  const totalCost = expTotal + payTotal;
+  const profit = sales - totalCost;
   const sum = k => pay.reduce((a, r) => a + (r[k] || 0), 0);
   const totalRow = pay.length ? `<tr style="background:var(--blush)">
       <td><b>合計（人件費）</b></td>
@@ -720,11 +725,39 @@ function renderPayroll() {
       <td>${editBtn("edit-expense", e.id)}<button class="linkish" data-act="delete-expense" data-id="${e.id}">取消</button></td></tr>`).join("")
     || `<tr><td colspan="5" class="tiny">経費の記録がありません</td></tr>`;
 
+  const perPerson = new Map();
+  const bump = (n, key, v) => {
+    const k = n || "指名なし";
+    if (!perPerson.has(k)) perPerson.set(k, { name: k, pos: 0, man: 0 });
+    perPerson.get(k)[key] += v;
+  };
+  monthTickets(m).forEach(t => bump(t.nominee, "pos", t.payment.total));
+  manual.forEach(x => bump(x.who, "man", x.amount));
+  const perList = [...perPerson.values()].map(p => ({ ...p, total: p.pos + p.man })).sort((a, b) => b.total - a.total);
+  const perPersonRows = (perList.length ? perList.map(p => `<tr>
+      <td>${esc(p.name)}</td>
+      <td class="num">${yen(p.pos)}</td>
+      <td class="num">${yen(p.man)}</td>
+      <td class="num"><b>${yen(p.total)}</b></td>
+      <td class="num tiny">${sales ? Math.round(p.total / sales * 1000) / 10 + "%" : "—"}</td>
+    </tr>`).join("") : `<tr><td colspan="5" class="tiny">この月の売上はまだありません</td></tr>`)
+    + (perList.length ? `<tr style="background:var(--blush)"><td><b>総売上</b></td>
+        <td class="num"><b>${yen(posSales)}</b></td><td class="num"><b>${yen(manualTotal)}</b></td>
+        <td class="num"><b>${yen(sales)}</b></td><td></td></tr>` : "");
+
+  const catTotals = [...exps.reduce((m2, e) => m2.set(e.cat || "その他", (m2.get(e.cat || "その他") || 0) + e.amount), new Map())]
+    .sort((a, b) => b[1] - a[1]);
+  const expTotalRow = exps.length ? `<tr style="background:var(--blush)">
+      <td colspan="3"><b>経費 合計</b></td><td class="num"><b>${yen(expTotal)}</b></td><td></td></tr>` : "";
+  const catSummary = catTotals.length
+    ? `<p class="tiny" style="margin-top:10px">費目別　${catTotals.map(([c, v]) => `${esc(c)} ${yen(v)}`).join("　／　")}</p>`
+    : "";
+
   const manualRows = manual.slice().sort((a, b) => b.date.localeCompare(a.date))
-    .map(x => `<tr><td>${x.date}</td><td>${esc(x.name || "手入力売上")}</td>
+    .map(x => `<tr><td>${x.date}</td><td>${esc(x.who || "—")}</td><td>${esc(x.name || "手入力売上")}</td>
       <td class="num">${yen(x.amount)}</td>
       <td>${editBtn("edit-manual", x.id)}<button class="linkish" data-act="delete-manual" data-id="${x.id}">取消</button></td></tr>`).join("")
-    || `<tr><td colspan="4" class="tiny">手入力の売上はありません</td></tr>`;
+    || `<tr><td colspan="5" class="tiny">手入力の売上はありません</td></tr>`;
 
   app.innerHTML = `
     <h2 class="title">月次・給与
@@ -735,7 +768,31 @@ function renderPayroll() {
       <div class="kpi"><span>売上</span><b>${yen(sales)}</b></div>
       <div class="kpi"><span>経費</span><b>${yen(expTotal)}</b></div>
       <div class="kpi"><span>人件費</span><b>${yen(payTotal)}</b></div>
-      <div class="kpi"><span>差引</span><b>${yen(sales - expTotal - payTotal)}</b></div>
+      <div class="kpi"><span>総経費</span><b>${yen(totalCost)}</b></div>
+      <div class="kpi"><span>残り</span><b style="color:${profit < 0 ? "var(--danger)" : "var(--ok)"}">${yen(profit)}</b></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">収支まとめ（${m}）</h3>
+      <div class="scroll"><table>
+        <tr><td>売上（レジ）</td><td class="num">${yen(posSales)}</td></tr>
+        <tr><td>売上（手入力）</td><td class="num">${yen(manualTotal)}</td></tr>
+        <tr><td><b>売上 合計</b></td><td class="num"><b>${yen(sales)}</b></td></tr>
+        <tr><td>経費 合計</td><td class="num">−${yen(expTotal)}</td></tr>
+        <tr><td>人件費 合計</td><td class="num">−${yen(payTotal)}</td></tr>
+        <tr style="background:var(--blush)"><td><b>総経費</b></td><td class="num"><b>−${yen(totalCost)}</b></td></tr>
+        <tr><td style="font-size:1.05rem"><b>残り（利益）</b></td>
+            <td class="num" style="font-size:1.15rem; color:${profit < 0 ? "var(--danger)" : "var(--ok)"}"><b>${yen(profit)}</b></td></tr>
+        ${sales ? `<tr><td class="tiny">利益率</td><td class="num tiny">${Math.round(profit / sales * 1000) / 10}%</td></tr>` : ""}
+      </table></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">個人別売上（${m}）</h3>
+      <div class="scroll"><table>
+        <tr><th>名前</th><th class="num">レジ売上</th><th class="num">手入力</th><th class="num">合計</th><th class="num">構成比</th></tr>
+        ${perPersonRows}
+      </table></div>
     </div>
 
     <div class="panel" style="margin-bottom:16px">
@@ -777,7 +834,9 @@ function renderPayroll() {
       <div class="scroll"><table>
         <tr><th>日付</th><th>費目</th><th>内容</th><th class="num">金額</th><th></th></tr>
         ${expRows}
+        ${expTotalRow}
       </table></div>
+      ${catSummary}
       <div class="actions">
         <button class="btn ghost" data-act="add-expense">＋ 経費を追加</button>
         <button class="btn ghost" data-act="csv-expenses">経費をCSV出力</button>
@@ -788,7 +847,7 @@ function renderPayroll() {
       <h3 class="subhead" style="margin-top:0">売上の手入力</h3>
       <p class="tiny">レジ実績 ${yen(posSales)} ＋ 手入力 ${yen(manualTotal)} ＝ ${yen(sales)}</p>
       <div class="scroll"><table>
-        <tr><th>日付</th><th>メモ</th><th class="num">金額</th><th></th></tr>
+        <tr><th>日付</th><th>担当</th><th>メモ</th><th class="num">金額</th><th></th></tr>
         ${manualRows}
       </table></div>
       <div class="actions">
@@ -912,6 +971,14 @@ function askManualSale(onOk, cur = {}) {
   openModal(`
     <h3>売上を手入力</h3>
     ${dateField("md", "日付", cur.date)}
+    <p class="tiny" style="margin:14px 0 6px">担当</p>
+    <select class="pay-input" style="text-align:left; font-size:1.05rem" id="mw">
+      ${state.settings.staff.map(n => `<option value="${esc(n)}" ${n === cur.who ? "selected" : ""}>${esc(n)}</option>`).join("")}
+      <option value="__other" ${cur.who && !state.settings.staff.includes(cur.who) ? "selected" : ""}>その他（下に入力）</option>
+      <option value="">指定なし</option>
+    </select>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem; margin-top:8px" id="mw2"
+           value="${cur.who && !state.settings.staff.includes(cur.who) ? esc(cur.who) : ""}" placeholder="その他の名前">
     <p class="tiny" style="margin:14px 0 6px">メモ</p>
     <input class="pay-input" style="text-align:left; font-size:1.05rem" id="mn" value="${esc(cur.name || "")}" placeholder="例）レジ導入前の売上">
     <p class="tiny" style="margin:14px 0 6px">金額（税込）</p>
@@ -923,12 +990,16 @@ function askManualSale(onOk, cur = {}) {
     if (btn.dataset.x === "cancel") return closeModal();
     if (btn.dataset.x !== "ok") return;
     const date = modalRoot.querySelector("#md").value;
+    const sel = modalRoot.querySelector("#mw").value;
+    const other = modalRoot.querySelector("#mw2").value.trim();
+    const who = sel === "__other" ? other : sel;
     const name = modalRoot.querySelector("#mn").value.trim();
     const amount = Number(modalRoot.querySelector("#ma").value.replace(/[^0-9]/g, ""));
     if (!date) return alert("日付を入れてください。");
     if (!amount) return alert("金額を入れてください。");
     closeModal();
-    onOk({ id: cur.id || "m" + Date.now() + Math.random().toString(36).slice(2, 5), date, name, amount });
+    if (who && !state.settings.staff.includes(who)) state.settings.staff.push(who);
+    onOk({ id: cur.id || "m" + Date.now() + Math.random().toString(36).slice(2, 5), date, who, name, amount });
   });
 }
 
@@ -1040,6 +1111,10 @@ function renderSettings() {
       <div class="field">
         <label>経費の費目（カンマ区切り）</label>
         <input type="text" class="wide" data-expcats value="${esc(s.expenseCats.join(", "))}">
+      </div>
+      <div class="field">
+        <label>担当者（売上の手入力で選ぶ名前）</label>
+        <input type="text" class="wide" data-staff value="${esc(s.staff.join(", "))}">
       </div>
     </div>
 
@@ -1490,6 +1565,8 @@ document.addEventListener("change", e => {
     state.settings.casts = el.value.split(",").map(s => s.trim()).filter(Boolean);
   } else if (el.hasAttribute("data-expcats")) {
     state.settings.expenseCats = el.value.split(",").map(s => s.trim()).filter(Boolean);
+  } else if (el.hasAttribute("data-staff")) {
+    state.settings.staff = el.value.split(",").map(s => s.trim()).filter(Boolean);
   } else if (el.dataset.wage !== undefined && el.dataset.wage !== "") {
     state.settings.wages[el.dataset.wage] = Number(el.value) || 0;
   } else if (el.hasAttribute("data-month")) {
