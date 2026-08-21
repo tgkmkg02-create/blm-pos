@@ -331,6 +331,7 @@ function defaultState() {
       expenseCats: ["仕入れ", "おしぼり", "家賃", "カラオケ", "光熱費", "消耗品", "広告", "その他"],
       staff: ["ふみや", "きみ", "さやか", "まい", "もえ", "りね", "まひろ"],
       fixedCosts: [{ name: "家賃", cat: "家賃", amount: 230000 }, { name: "カラオケ", cat: "カラオケ", amount: 45000 }],
+      owner: { name: "きみ", fixed: 300000, pct: 30 },
     },
     menu: defaultMenu(),
     menuVersion: MENU_VERSION,
@@ -358,6 +359,7 @@ function load() {
     st.settings.back = Object.assign(defaultState().settings.back, (parsed.settings || {}).back || {});
     st.settings.nominate = Object.assign(defaultState().settings.nominate, (parsed.settings || {}).nominate || {});
     st.settings.wages = Object.assign(defaultState().settings.wages, (parsed.settings || {}).wages || {});
+    st.settings.owner = Object.assign(defaultState().settings.owner, (parsed.settings || {}).owner || {});
     if (st.menuVersion !== MENU_VERSION) return migrate(st);
     return st;
   } catch (e) {
@@ -766,7 +768,11 @@ function renderPayroll() {
   const pay = payroll(m);
   const payTotal = pay.reduce((a, r) => a + r.pay, 0);
   const totalCost = expTotal + payTotal;
-  const profit = sales - totalCost;
+  const profit = sales - totalCost;                 /* 粗利（オーナー報酬を引く前） */
+  const ow = state.settings.owner;
+  const ownerPct = Math.round(profit * (ow.pct || 0) / 100);
+  const ownerPay = (ow.fixed || 0) + ownerPct;
+  const netProfit = profit - ownerPay;
   const sum = k => pay.reduce((a, r) => a + (r[k] || 0), 0);
   const totalRow = pay.length ? `<tr class="sum">
       <td><b>合計（人件費）</b></td>
@@ -866,7 +872,9 @@ function renderPayroll() {
       <div class="kpi"><span>経費</span><b>${yen(expTotal)}</b></div>
       <div class="kpi"><span>人件費</span><b>${yen(payTotal)}</b></div>
       <div class="kpi"><span>総経費</span><b>${yen(totalCost)}</b></div>
-      <div class="kpi"><span>残り</span><b style="color:${profit < 0 ? "var(--danger)" : "var(--ok)"}">${yen(profit)}</b></div>
+      <div class="kpi"><span>粗利</span><b>${yen(profit)}</b></div>
+      <div class="kpi"><span>${esc(ow.name)}の報酬</span><b>${yen(ownerPay)}</b></div>
+      <div class="kpi"><span>最終利益</span><b style="color:${netProfit < 0 ? "var(--danger)" : "var(--ok)"}">${yen(netProfit)}</b></div>
     </div>
 
     <div class="panel" style="margin-bottom:16px">
@@ -878,9 +886,13 @@ function renderPayroll() {
         <tr><td>経費 合計</td><td class="num">−${yen(expTotal)}</td></tr>
         <tr><td>人件費 合計</td><td class="num">−${yen(payTotal)}</td></tr>
         <tr class="sum"><td><b>総経費</b></td><td class="num"><b>−${yen(totalCost)}</b></td></tr>
-        <tr><td style="font-size:1.05rem"><b>残り（利益）</b></td>
-            <td class="num" style="font-size:1.15rem; color:${profit < 0 ? "var(--danger)" : "var(--ok)"}"><b>${yen(profit)}</b></td></tr>
-        ${sales ? `<tr><td class="tiny">利益率</td><td class="num tiny">${Math.round(profit / sales * 1000) / 10}%</td></tr>` : ""}
+        <tr><td><b>粗利（売上 − 総経費）</b></td><td class="num"><b>${yen(profit)}</b></td></tr>
+        <tr><td>${esc(ow.name)} 固定報酬</td><td class="num">−${yen(ow.fixed || 0)}</td></tr>
+        <tr><td>${esc(ow.name)} 歩合（粗利の${ow.pct}%）</td><td class="num">−${yen(ownerPct)}</td></tr>
+        <tr class="sum"><td><b>${esc(ow.name)} 報酬 合計</b></td><td class="num"><b>−${yen(ownerPay)}</b></td></tr>
+        <tr><td style="font-size:1.05rem"><b>最終利益（店に残る）</b></td>
+            <td class="num" style="font-size:1.15rem; color:${netProfit < 0 ? "var(--danger)" : "var(--ok)"}"><b>${yen(netProfit)}</b></td></tr>
+        ${sales ? `<tr><td class="tiny">粗利率／最終利益率</td><td class="num tiny">${Math.round(profit / sales * 1000) / 10}% ／ ${Math.round(netProfit / sales * 1000) / 10}%</td></tr>` : ""}
       </table></div>
     </div>
 
@@ -1210,6 +1222,11 @@ function renderSettings() {
         <label>経費の費目（カンマ区切り）</label>
         <input type="text" class="wide" data-expcats value="${esc(s.expenseCats.join(", "))}">
       </div>
+      <h3 class="subhead">オーナー報酬（人件費とは別枠）</h3>
+      <div class="field"><label>名前</label><input type="text" data-owner="name" value="${esc(s.owner.name)}"></div>
+      <div class="field"><label>固定報酬</label><input type="number" data-owner="fixed" value="${s.owner.fixed}"><span class="tiny">円 / 月</span></div>
+      <div class="field"><label>歩合</label><input type="number" data-owner="pct" value="${s.owner.pct}"><span class="tiny">%（粗利 = 売上 − 経費 − キャスト人件費 に対して）</span></div>
+
       <h3 class="subhead">毎月の固定費（月を開くと自動で経費に入ります）</h3>
       ${s.fixedCosts.map((f, i) => `<div class="field">
         <input type="text" data-fixname="${i}" value="${esc(f.name)}" style="width:150px">
@@ -1705,6 +1722,9 @@ document.addEventListener("change", e => {
     state.settings.expenseCats = el.value.split(",").map(s => s.trim()).filter(Boolean);
   } else if (el.hasAttribute("data-staff")) {
     state.settings.staff = el.value.split(",").map(s => s.trim()).filter(Boolean);
+  } else if (el.dataset.owner !== undefined && el.dataset.owner !== "") {
+    const k = el.dataset.owner;
+    state.settings.owner[k] = k === "name" ? el.value.trim() : (Number(el.value) || 0);
   } else if (el.dataset.fixname !== undefined && el.dataset.fixname !== "") {
     state.settings.fixedCosts[Number(el.dataset.fixname)].name = el.value;
   } else if (el.dataset.fixamt !== undefined && el.dataset.fixamt !== "") {
