@@ -256,6 +256,7 @@ function defaultState() {
       back: { dohan: 0, small: 100, large: 500, pitcher: 500, pct: 10 },
       /* 指名バック（%）。シャンパン・ボトルは対象外 */
       nominate: { normal: 10, self: 20, dohan: 30 },
+      deductPct: 10,
       wages: { さやか: 2500, まい: 2000, もえ: 1500, りね: 1500, まひろ: 1500 },
       expenseCats: ["仕入れ", "おしぼり", "家賃", "カラオケ", "光熱費", "消耗品", "広告", "その他"],
     },
@@ -527,7 +528,7 @@ function renderReport() {
   const expTotal = exps.reduce((a, e) => a + e.amount, 0);
   const expRows = exps.length
     ? exps.map(e => `<tr><td>${esc(e.name)}</td><td class="num">${yen(e.amount)}</td>
-        <td><button class="linkish" data-act="delete-expense" data-id="${e.id}">取消</button></td></tr>`).join("")
+        <td>${editBtn("edit-expense", e.id)}<button class="linkish" data-act="delete-expense" data-id="${e.id}">取消</button></td></tr>`).join("")
     : `<tr><td colspan="3" class="tiny">本日の経費はまだありません</td></tr>`;
 
   app.innerHTML = `
@@ -638,8 +639,16 @@ function payroll(m) {
   });
   castSummary(monthTickets(m)).forEach(c => { get(c.cast).back += c.total; });
   monthOf(state.adjustments, m).forEach(a => { get(a.cast).adj += a.amount; });
-  return [...map.values()].map(c => ({ ...c, pay: c.wage + c.back + c.adj })).sort((a, b) => b.pay - a.pay);
+  const pct = state.settings.deductPct || 0;
+  return [...map.values()].map(c => {
+    const gross = c.wage + c.back + c.adj;
+    const deduct = Math.round(gross * pct / 100);
+    return { ...c, gross, deduct, pay: gross - deduct };
+  }).sort((a, b) => b.pay - a.pay);
 }
+
+const editBtn = (act, id) =>
+  `<button class="linkish" style="color:var(--magenta)" data-act="${act}" data-id="${id}">編集</button> `;
 
 function renderPayroll() {
   const m = currentMonth();
@@ -659,8 +668,10 @@ function renderPayroll() {
       <td class="num">${yen(r.wage)}</td>
       <td class="num">${yen(r.back)}</td>
       <td class="num">${r.adj ? yen(r.adj) : "—"}</td>
+      <td class="num">${yen(r.gross)}</td>
+      <td class="num">${r.deduct ? "−" + yen(r.deduct) : "—"}</td>
       <td class="num"><b>${yen(r.pay)}</b></td>
-    </tr>`).join("") : `<tr><td colspan="7" class="tiny">この月の記録はまだありません</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="9" class="tiny">この月の記録はまだありません</td></tr>`;
 
   const shiftRows = monthOf(state.shifts, m).slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(s => `<tr><td>${s.date}</td><td>${esc(s.cast)}</td>
@@ -668,25 +679,25 @@ function renderPayroll() {
       <td class="num">${s.hours}h</td>
       <td class="num">${yen(s.rate)}</td><td class="num">${yen(Math.round(s.hours * s.rate))}</td>
       <td class="num">${s.back ? yen(s.back) : "—"}</td>
-      <td><button class="linkish" data-act="delete-shift" data-id="${s.id}">取消</button></td></tr>`).join("")
+      <td>${editBtn("edit-shift", s.id)}<button class="linkish" data-act="delete-shift" data-id="${s.id}">取消</button></td></tr>`).join("")
     || `<tr><td colspan="8" class="tiny">出勤の記録がありません</td></tr>`;
 
   const adjRows = monthOf(state.adjustments, m).slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(a => `<tr><td>${a.date}</td><td>${esc(a.cast)}</td><td>${esc(a.name)}</td>
       <td class="num">${yen(a.amount)}</td>
-      <td><button class="linkish" data-act="delete-adj" data-id="${a.id}">取消</button></td></tr>`).join("")
+      <td>${editBtn("edit-adj", a.id)}<button class="linkish" data-act="delete-adj" data-id="${a.id}">取消</button></td></tr>`).join("")
     || `<tr><td colspan="5" class="tiny">手当・控除の記録がありません</td></tr>`;
 
   const expRows = exps.slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(e => `<tr><td>${e.date}</td><td>${esc(e.cat || "その他")}</td><td>${esc(e.name)}</td>
       <td class="num">${yen(e.amount)}</td>
-      <td><button class="linkish" data-act="delete-expense" data-id="${e.id}">取消</button></td></tr>`).join("")
+      <td>${editBtn("edit-expense", e.id)}<button class="linkish" data-act="delete-expense" data-id="${e.id}">取消</button></td></tr>`).join("")
     || `<tr><td colspan="5" class="tiny">経費の記録がありません</td></tr>`;
 
   const manualRows = manual.slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(x => `<tr><td>${x.date}</td><td>${esc(x.name || "手入力売上")}</td>
       <td class="num">${yen(x.amount)}</td>
-      <td><button class="linkish" data-act="delete-manual" data-id="${x.id}">取消</button></td></tr>`).join("")
+      <td>${editBtn("edit-manual", x.id)}<button class="linkish" data-act="delete-manual" data-id="${x.id}">取消</button></td></tr>`).join("")
     || `<tr><td colspan="4" class="tiny">手入力の売上はありません</td></tr>`;
 
   app.innerHTML = `
@@ -705,7 +716,8 @@ function renderPayroll() {
       <h3 class="subhead" style="margin-top:0">給与（${m}）</h3>
       <div class="scroll"><table>
         <tr><th>キャスト</th><th class="num">出勤</th><th class="num">時間</th><th class="num">時給分</th>
-            <th class="num">バック</th><th class="num">手当控除</th><th class="num">支給額</th></tr>
+            <th class="num">バック</th><th class="num">手当控除</th><th class="num">総支給</th>
+            <th class="num">控除${state.settings.deductPct}%</th><th class="num">差引支給額</th></tr>
         ${payRows}
       </table></div>
       <div class="actions">
@@ -762,9 +774,9 @@ function castOptions(sel) {
     `<option value="${esc(c)}" ${c === sel ? "selected" : ""}>${esc(c)}</option>`).join("");
 }
 
-function dateField(id, label) {
+function dateField(id, label, value) {
   return `<p class="tiny" style="margin:0 0 6px">${label}</p>
-   <input class="pay-input" style="text-align:left; font-size:1.05rem" type="date" id="${id}" value="${dayKey(Date.now())}">`;
+   <input class="pay-input" style="text-align:left; font-size:1.05rem" type="date" id="${id}" value="${value || dayKey(Date.now())}">`;
 }
 
 function timeOptions(sel) {
@@ -782,13 +794,13 @@ function hoursBetween(start, end) {
   return ((toMin(end) - toMin(start) + 1440) % 1440) / 60;
 }
 
-function askShift(onOk) {
-  const first = state.settings.casts[0] || "";
-  const st = state.settings.shiftStart || "20:00";
-  const en = state.settings.shiftEnd || "03:00";
+function askShift(onOk, cur = {}) {
+  const first = cur.cast || state.settings.casts[0] || "";
+  const st = cur.start || state.settings.shiftStart || "20:00";
+  const en = cur.end || state.settings.shiftEnd || "03:00";
   openModal(`
-    <h3>出勤を追加</h3>
-    ${dateField("sd", "日付")}
+    <h3>${cur.id ? "出勤を編集" : "出勤を追加"}</h3>
+    ${dateField("sd", "日付", cur.date)}
     <p class="tiny" style="margin:14px 0 6px">キャスト</p>
     <select class="pay-input" style="text-align:left; font-size:1.05rem" id="sc">${castOptions(first)}</select>
     <p class="tiny" style="margin:14px 0 6px">時間（30分刻み）</p>
@@ -799,9 +811,9 @@ function askShift(onOk) {
     </div>
     <p class="tiny" style="margin:8px 0 0; text-align:right">実働 <b id="shh">${hoursBetween(st, en)}</b> 時間</p>
     <p class="tiny" style="margin:14px 0 6px">時給（円）</p>
-    <input class="pay-input" inputmode="numeric" id="sr" value="${state.settings.wages[first] || 1500}">
+    <input class="pay-input" inputmode="numeric" id="sr" value="${cur.rate || state.settings.wages[first] || 1500}">
     <p class="tiny" style="margin:14px 0 6px">この日のドリンクバック（任意・手入力分）</p>
-    <input class="pay-input" inputmode="numeric" id="sb" placeholder="0">
+    <input class="pay-input" inputmode="numeric" id="sb" value="${cur.back || ""}" placeholder="0">
     <div class="actions">
       <button class="btn ghost" data-x="cancel">やめる</button>
       <button class="btn" data-x="ok">記録する</button>
@@ -822,7 +834,7 @@ function askShift(onOk) {
     state.settings.shiftStart = start;
     state.settings.shiftEnd = end;
     closeModal();
-    onOk({ id: "s" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, start, end, hours, rate, back });
+    onOk({ id: cur.id || "s" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, start, end, hours, rate, back });
   });
 
   const sel = modalRoot.querySelector("#sc");
@@ -837,18 +849,18 @@ function askShift(onOk) {
   modalRoot.querySelector("#s2").addEventListener("change", upd);
 }
 
-function askAdjustment(onOk) {
+function askAdjustment(onOk, cur = {}) {
   openModal(`
     <h3>手当・控除</h3>
-    ${dateField("ad", "日付")}
+    ${dateField("ad", "日付", cur.date)}
     <p class="tiny" style="margin:14px 0 6px">キャスト</p>
-    <select class="pay-input" style="text-align:left; font-size:1.05rem" id="ac">${castOptions(state.settings.casts[0])}</select>
+    <select class="pay-input" style="text-align:left; font-size:1.05rem" id="ac">${castOptions(cur.cast || state.settings.casts[0])}</select>
     <p class="tiny" style="margin:14px 0 6px">内容</p>
-    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="an" placeholder="例）同伴手当・遅刻控除・前借り">
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="an" value="${esc(cur.name || "")}" placeholder="例）同伴手当・遅刻控除・前借り">
     <div class="chips" style="margin-top:8px">${["ドリンクバック", "シャンパンバック", "同伴手当", "遅刻控除", "前借り"]
       .map(t => `<button type="button" class="chip" data-fill="${t}">${t}</button>`).join("")}</div>
     <p class="tiny" style="margin:14px 0 6px">金額（控除はマイナスで入力）</p>
-    <input class="pay-input" type="number" id="aa" placeholder="0">
+    <input class="pay-input" type="number" id="aa" value="${cur.amount || ""}" placeholder="0">
     <div class="actions">
       <button class="btn ghost" data-x="cancel">やめる</button>
       <button class="btn" data-x="ok">記録する</button>
@@ -864,18 +876,18 @@ function askAdjustment(onOk) {
     if (!name) return alert("内容を入れてください。");
     if (!amount) return alert("金額を入れてください。");
     closeModal();
-    onOk({ id: "a" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, name, amount });
+    onOk({ id: cur.id || "a" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, name, amount });
   });
 }
 
-function askManualSale(onOk) {
+function askManualSale(onOk, cur = {}) {
   openModal(`
     <h3>売上を手入力</h3>
-    ${dateField("md", "日付")}
+    ${dateField("md", "日付", cur.date)}
     <p class="tiny" style="margin:14px 0 6px">メモ</p>
-    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="mn" placeholder="例）レジ導入前の売上">
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="mn" value="${esc(cur.name || "")}" placeholder="例）レジ導入前の売上">
     <p class="tiny" style="margin:14px 0 6px">金額（税込）</p>
-    <input class="pay-input" inputmode="numeric" id="ma" placeholder="0">
+    <input class="pay-input" inputmode="numeric" id="ma" value="${cur.amount || ""}" placeholder="0">
     <div class="actions">
       <button class="btn ghost" data-x="cancel">やめる</button>
       <button class="btn" data-x="ok">記録する</button>
@@ -888,13 +900,20 @@ function askManualSale(onOk) {
     if (!date) return alert("日付を入れてください。");
     if (!amount) return alert("金額を入れてください。");
     closeModal();
-    onOk({ id: "m" + Date.now() + Math.random().toString(36).slice(2, 5), date, name, amount });
+    onOk({ id: cur.id || "m" + Date.now() + Math.random().toString(36).slice(2, 5), date, name, amount });
   });
 }
 
+/* 既存の1件を同じモーダルで開き直して上書きする */
+function editEntry(list, id, ask) {
+  const cur = list.find(x => x.id === id);
+  if (!cur) return;
+  ask(updated => { Object.assign(cur, updated); save(); render(); }, cur);
+}
+
 function csvPayroll(m) {
-  const rows = [["月", "キャスト", "出勤日数", "勤務時間", "時給分", "バック", "手当控除", "支給額"]];
-  payroll(m).forEach(r => rows.push([m, r.cast, r.days, r.hours, r.wage, r.back, r.adj, r.pay]));
+  const rows = [["月", "キャスト", "出勤日数", "勤務時間", "時給分", "バック", "手当控除", "総支給", "控除", "差引支給額"]];
+  payroll(m).forEach(r => rows.push([m, r.cast, r.days, r.hours, r.wage, r.back, r.adj, r.gross, r.deduct, r.pay]));
   download(toCsv(rows), "payroll-" + m + ".csv", "text/csv;charset=utf-8");
 }
 
@@ -940,6 +959,7 @@ function renderSettings() {
       ${nomNum("指名バック 通常客", "normal")}
       ${nomNum("指名バック 自分呼び", "self")}
       ${nomNum("指名バック 同伴", "dohan")}
+      <div class="field"><label>給与からの控除</label><input type="number" data-set="deductPct" value="${s.deductPct}"><span class="tiny">%（総支給から差し引く）</span></div>
       <div class="field">
         <label>キャスト名（カンマ区切り）</label>
         <input type="text" class="wide" data-casts value="${esc(s.casts.join(", "))}">
@@ -1038,17 +1058,17 @@ function askCustom(opts, onOk) {
 }
 
 /* 経費の入力。日付は既定で当日 */
-function askExpense(onOk) {
+function askExpense(onOk, cur = {}) {
   openModal(`
-    <h3>経費を追加</h3>
+    <h3>${cur.id ? "経費を編集" : "経費を追加"}</h3>
     <p class="tiny" style="margin:0 0 6px">日付</p>
-    <input class="pay-input" style="text-align:left; font-size:1.05rem" type="date" id="ed" value="${dayKey(Date.now())}">
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" type="date" id="ed" value="${cur.date || dayKey(Date.now())}">
     <p class="tiny" style="margin:14px 0 6px">費目</p>
-    <select class="pay-input" style="text-align:left; font-size:1.05rem" id="ec">${state.settings.expenseCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select>
+    <select class="pay-input" style="text-align:left; font-size:1.05rem" id="ec">${state.settings.expenseCats.map(c => `<option value="${esc(c)}" ${c === cur.cat ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
     <p class="tiny" style="margin:14px 0 6px">内容</p>
-    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="en" placeholder="例）おしぼり代・仕入れ・タクシー代">
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="en" value="${esc(cur.name || "")}" placeholder="例）おしぼり代・仕入れ・タクシー代">
     <p class="tiny" style="margin:14px 0 6px">金額（円）</p>
-    <input class="pay-input" inputmode="numeric" id="ea" placeholder="0">
+    <input class="pay-input" inputmode="numeric" id="ea" value="${cur.amount || ""}" placeholder="0">
     <div class="actions">
       <button class="btn ghost" data-x="cancel">やめる</button>
       <button class="btn" data-x="ok">記録する</button>
@@ -1061,9 +1081,9 @@ function askExpense(onOk) {
     if (!date) return alert("日付を入れてください。");
     if (!name) return alert("内容を入れてください。");
     if (!amount) return alert("金額を入れてください。");
-    closeModal();
     const cat = modalRoot.querySelector("#ec").value;
-    onOk({ id: "e" + Date.now() + Math.random().toString(36).slice(2, 5), date, cat, name, amount });
+    closeModal();
+    onOk({ id: cur.id || "e" + Date.now() + Math.random().toString(36).slice(2, 5), date, cat, name, amount });
   });
 }
 
@@ -1329,6 +1349,10 @@ document.addEventListener("click", e => {
     save(); return render();
   }
   if (act === "add-shift") return askShift(x => { state.shifts.push(x); save(); render(); });
+  if (act === "edit-shift") return editEntry(state.shifts, el.dataset.id, askShift);
+  if (act === "edit-adj") return editEntry(state.adjustments, el.dataset.id, askAdjustment);
+  if (act === "edit-expense") return editEntry(state.expenses, el.dataset.id, askExpense);
+  if (act === "edit-manual") return editEntry(state.manualSales, el.dataset.id, askManualSale);
   if (act === "add-adj") return askAdjustment(x => { state.adjustments.push(x); save(); render(); });
   if (act === "add-manual") return askManualSale(x => { state.manualSales.push(x); save(); render(); });
   if (act === "csv-payroll") return csvPayroll(currentMonth());
