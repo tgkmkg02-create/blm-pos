@@ -267,6 +267,7 @@ function defaultState() {
     shifts: [],
     adjustments: [],
     manualSales: [],
+    payOverrides: [],
     seq: 1,
   };
 }
@@ -639,12 +640,23 @@ function payroll(m) {
   });
   castSummary(monthTickets(m)).forEach(c => { get(c.cast).back += c.total; });
   monthOf(state.adjustments, m).forEach(a => { get(a.cast).adj += a.amount; });
-  const pct = state.settings.deductPct || 0;
-  return [...map.values()].map(c => {
-    const gross = c.wage + c.back + c.adj;
-    const deduct = Math.round(gross * pct / 100);
-    return { ...c, gross, deduct, pay: gross - deduct };
-  }).sort((a, b) => b.pay - a.pay);
+  return [...map.values()].map(c => applyOverride(c, m)).sort((a, b) => b.pay - a.pay);
+}
+
+function findOverride(m, cast) {
+  return state.payOverrides.find(o => o.month === m && o.cast === cast) || null;
+}
+
+/* 手修正があればそれを優先し、無ければ自動計算の値を使う */
+function applyOverride(c, m) {
+  const ov = findOverride(m, c.cast);
+  const autoBack = c.back;
+  const back = ov && ov.back != null ? ov.back : autoBack;
+  const gross = c.wage + back + c.adj;
+  const pct = ov && ov.deductPct != null ? ov.deductPct : (state.settings.deductPct || 0);
+  const deduct = Math.round(gross * pct / 100);
+  const pay = ov && ov.pay != null ? ov.pay : gross - deduct;
+  return { ...c, autoBack, back, gross, deductPct: pct, deduct, pay, edited: !!ov };
 }
 
 const editBtn = (act, id) =>
@@ -662,16 +674,17 @@ function renderPayroll() {
   const payTotal = pay.reduce((a, r) => a + r.pay, 0);
 
   const payRows = pay.length ? pay.map(r => `<tr>
-      <td>${esc(r.cast)}</td>
+      <td>${esc(r.cast)}${r.edited ? ` <small style="color:var(--magenta)">手修正</small>` : ""}</td>
       <td class="num">${r.days}</td>
       <td class="num">${r.hours}</td>
       <td class="num">${yen(r.wage)}</td>
       <td class="num">${yen(r.back)}</td>
       <td class="num">${r.adj ? yen(r.adj) : "—"}</td>
       <td class="num">${yen(r.gross)}</td>
-      <td class="num">${r.deduct ? "−" + yen(r.deduct) : "—"}</td>
+      <td class="num">${r.deduct ? "−" + yen(r.deduct) + ` <small>${r.deductPct}%</small>` : "—"}</td>
       <td class="num"><b>${yen(r.pay)}</b></td>
-    </tr>`).join("") : `<tr><td colspan="9" class="tiny">この月の記録はまだありません</td></tr>`;
+      <td>${editBtn("edit-pay", esc(r.cast))}</td>
+    </tr>`).join("") : `<tr><td colspan="10" class="tiny">この月の記録はまだありません</td></tr>`;
 
   const shiftRows = monthOf(state.shifts, m).slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(s => `<tr><td>${s.date}</td><td>${esc(s.cast)}</td>
@@ -717,7 +730,7 @@ function renderPayroll() {
       <div class="scroll"><table>
         <tr><th>キャスト</th><th class="num">出勤</th><th class="num">時間</th><th class="num">時給分</th>
             <th class="num">バック</th><th class="num">手当控除</th><th class="num">総支給</th>
-            <th class="num">控除${state.settings.deductPct}%</th><th class="num">差引支給額</th></tr>
+            <th class="num">控除</th><th class="num">差引支給額</th><th></th></tr>
         ${payRows}
       </table></div>
       <div class="actions">
@@ -909,6 +922,50 @@ function editEntry(list, id, ask) {
   const cur = list.find(x => x.id === id);
   if (!cur) return;
   ask(updated => { Object.assign(cur, updated); save(); render(); }, cur);
+}
+
+function askPayOverride(cast, m) {
+  const row = payroll(m).find(r => r.cast === cast);
+  if (!row) return;
+  const ov = findOverride(m, cast) || {};
+  const auto = row.autoBack;
+  openModal(`
+    <h3>${esc(cast)} の給与を編集</h3>
+    <p class="tiny" style="line-height:2">${m}　時給分 ${yen(row.wage)}／自動バック ${yen(auto)}／手当控除 ${yen(row.adj)}</p>
+
+    <p class="tiny" style="margin:12px 0 6px">バック（空欄なら自動の ${yen(auto)}）</p>
+    <input class="pay-input" inputmode="numeric" id="pb" value="${ov.back != null ? ov.back : ""}" placeholder="${auto}">
+
+    <p class="tiny" style="margin:14px 0 6px">控除率（空欄なら ${state.settings.deductPct}%）</p>
+    <input class="pay-input" inputmode="numeric" id="pd" value="${ov.deductPct != null ? ov.deductPct : ""}" placeholder="${state.settings.deductPct}">
+
+    <p class="tiny" style="margin:14px 0 6px">差引支給額を直接指定（空欄なら自動計算）</p>
+    <input class="pay-input" inputmode="numeric" id="pp" value="${ov.pay != null ? ov.pay : ""}" placeholder="${row.gross - row.deduct}">
+
+    <div class="actions">
+      <button class="btn ghost" data-x="reset">自動に戻す</button>
+      <button class="btn" data-x="ok">保存</button>
+    </div>
+    <div class="actions"><button class="btn ghost" data-x="cancel">やめる</button></div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x === "reset") {
+      state.payOverrides = state.payOverrides.filter(o => !(o.month === m && o.cast === cast));
+      closeModal(); save(); return render();
+    }
+    if (btn.dataset.x !== "ok") return;
+    const num = id => {
+      const v = modalRoot.querySelector("#" + id).value.replace(/[^0-9]/g, "");
+      return v === "" ? null : Number(v);
+    };
+    const rec = { month: m, cast, back: num("pb"), deductPct: num("pd"), pay: num("pp") };
+    closeModal();
+    state.payOverrides = state.payOverrides.filter(o => !(o.month === m && o.cast === cast));
+    if (rec.back != null || rec.deductPct != null || rec.pay != null) {
+      rec.id = "o" + Date.now() + Math.random().toString(36).slice(2, 5);
+      state.payOverrides.push(rec);
+    }
+    save(); render();
+  });
 }
 
 function csvPayroll(m) {
@@ -1349,6 +1406,7 @@ document.addEventListener("click", e => {
     save(); return render();
   }
   if (act === "add-shift") return askShift(x => { state.shifts.push(x); save(); render(); });
+  if (act === "edit-pay") return askPayOverride(el.dataset.id, currentMonth());
   if (act === "edit-shift") return editEntry(state.shifts, el.dataset.id, askShift);
   if (act === "edit-adj") return editEntry(state.adjustments, el.dataset.id, askAdjustment);
   if (act === "edit-expense") return editEntry(state.expenses, el.dataset.id, askExpense);
