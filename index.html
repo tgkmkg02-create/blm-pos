@@ -1135,6 +1135,10 @@ function renderSettings() {
         <button class="btn ghost" data-act="import">読み込み</button>
       </div>
       <div class="actions">
+        <button class="btn danger" data-act="clear-sales">レジ売上だけ全消去</button>
+        <button class="btn danger" data-act="clear-manual">手入力売上だけ全消去</button>
+      </div>
+      <div class="actions">
         <button class="btn danger" data-act="reset">全データ初期化</button>
       </div>
     </div>`;
@@ -1547,6 +1551,19 @@ document.addEventListener("click", e => {
   }
   if (act === "export") return exportJson();
   if (act === "import") return importJson();
+  if (act === "clear-sales") {
+    const n = state.tickets.length;
+    if (!confirm("レジの伝票 " + n + " 件をすべて削除します。経費・給与・設定は残ります。よろしいですか？")) return;
+    state.tickets = [];
+    state.seq = 1;
+    save(); return render();
+  }
+  if (act === "clear-manual") {
+    const n = state.manualSales.length;
+    if (!confirm("手入力の売上 " + n + " 件をすべて削除します。よろしいですか？")) return;
+    state.manualSales = [];
+    save(); return render();
+  }
   if (act === "reset") {
     if (!confirm("すべての売上・設定を消去します。よろしいですか？")) return;
     state = defaultState(); save(); return render();
