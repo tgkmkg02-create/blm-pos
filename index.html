@@ -136,6 +136,9 @@
   .scroll { overflow-x:auto; }
   .tiny { font-size:.78rem; color:var(--ink-soft); }
   .linkish { background:none; border:none; color:var(--danger); font-size:.8rem; padding:4px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { border:1px solid var(--rule); background:var(--blush); color:var(--magenta);
+          border-radius:999px; padding:6px 12px; font-size:.8rem; font-weight:700; }
 
   /* ---------- settings ---------- */
   .field { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
@@ -631,7 +634,7 @@ function payroll(m) {
   };
   monthOf(state.shifts, m).forEach(s => {
     const c = get(s.cast);
-    c.days += 1; c.hours += s.hours; c.wage += Math.round(s.hours * s.rate);
+    c.days += 1; c.hours += s.hours; c.wage += Math.round(s.hours * s.rate); c.back += Number(s.back || 0);
   });
   castSummary(monthTickets(m)).forEach(c => { get(c.cast).back += c.total; });
   monthOf(state.adjustments, m).forEach(a => { get(a.cast).adj += a.amount; });
@@ -660,10 +663,13 @@ function renderPayroll() {
     </tr>`).join("") : `<tr><td colspan="7" class="tiny">この月の記録はまだありません</td></tr>`;
 
   const shiftRows = monthOf(state.shifts, m).slice().sort((a, b) => b.date.localeCompare(a.date))
-    .map(s => `<tr><td>${s.date}</td><td>${esc(s.cast)}</td><td class="num">${s.hours}h</td>
+    .map(s => `<tr><td>${s.date}</td><td>${esc(s.cast)}</td>
+      <td>${s.start ? s.start + "–" + s.end : "—"}</td>
+      <td class="num">${s.hours}h</td>
       <td class="num">${yen(s.rate)}</td><td class="num">${yen(Math.round(s.hours * s.rate))}</td>
+      <td class="num">${s.back ? yen(s.back) : "—"}</td>
       <td><button class="linkish" data-act="delete-shift" data-id="${s.id}">取消</button></td></tr>`).join("")
-    || `<tr><td colspan="6" class="tiny">出勤の記録がありません</td></tr>`;
+    || `<tr><td colspan="8" class="tiny">出勤の記録がありません</td></tr>`;
 
   const adjRows = monthOf(state.adjustments, m).slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(a => `<tr><td>${a.date}</td><td>${esc(a.cast)}</td><td>${esc(a.name)}</td>
@@ -712,7 +718,8 @@ function renderPayroll() {
     <div class="panel" style="margin-bottom:16px">
       <h3 class="subhead" style="margin-top:0">出勤記録</h3>
       <div class="scroll"><table>
-        <tr><th>日付</th><th>キャスト</th><th class="num">時間</th><th class="num">時給</th><th class="num">時給分</th><th></th></tr>
+        <tr><th>日付</th><th>キャスト</th><th>時間帯</th><th class="num">実働</th><th class="num">時給</th>
+            <th class="num">時給分</th><th class="num">バック手入力</th><th></th></tr>
         ${shiftRows}
       </table></div>
     </div>
@@ -760,17 +767,41 @@ function dateField(id, label) {
    <input class="pay-input" style="text-align:left; font-size:1.05rem" type="date" id="${id}" value="${dayKey(Date.now())}">`;
 }
 
+function timeOptions(sel) {
+  let out = "";
+  for (let i = 0; i < 48; i++) {
+    const v = String(Math.floor(i / 2)).padStart(2, "0") + ":" + (i % 2 ? "30" : "00");
+    out += `<option value="${v}" ${v === sel ? "selected" : ""}>${v}</option>`;
+  }
+  return out;
+}
+
+/* 深夜跨ぎ（20:00→翌3:00）も正しく出す */
+function hoursBetween(start, end) {
+  const toMin = t => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+  return ((toMin(end) - toMin(start) + 1440) % 1440) / 60;
+}
+
 function askShift(onOk) {
   const first = state.settings.casts[0] || "";
+  const st = state.settings.shiftStart || "20:00";
+  const en = state.settings.shiftEnd || "03:00";
   openModal(`
     <h3>出勤を追加</h3>
     ${dateField("sd", "日付")}
     <p class="tiny" style="margin:14px 0 6px">キャスト</p>
     <select class="pay-input" style="text-align:left; font-size:1.05rem" id="sc">${castOptions(first)}</select>
+    <p class="tiny" style="margin:14px 0 6px">時間（30分刻み）</p>
+    <div style="display:flex; align-items:center; gap:8px">
+      <select class="pay-input" style="text-align:left; font-size:1.05rem" id="s1">${timeOptions(st)}</select>
+      <span class="tiny">〜</span>
+      <select class="pay-input" style="text-align:left; font-size:1.05rem" id="s2">${timeOptions(en)}</select>
+    </div>
+    <p class="tiny" style="margin:8px 0 0; text-align:right">実働 <b id="shh">${hoursBetween(st, en)}</b> 時間</p>
     <p class="tiny" style="margin:14px 0 6px">時給（円）</p>
     <input class="pay-input" inputmode="numeric" id="sr" value="${state.settings.wages[first] || 1500}">
-    <p class="tiny" style="margin:14px 0 6px">勤務時間</p>
-    <input class="pay-input" inputmode="decimal" id="sh" value="7">
+    <p class="tiny" style="margin:14px 0 6px">この日のドリンクバック（任意・手入力分）</p>
+    <input class="pay-input" inputmode="numeric" id="sb" placeholder="0">
     <div class="actions">
       <button class="btn ghost" data-x="cancel">やめる</button>
       <button class="btn" data-x="ok">記録する</button>
@@ -779,18 +810,31 @@ function askShift(onOk) {
     if (btn.dataset.x !== "ok") return;
     const date = modalRoot.querySelector("#sd").value;
     const cast = modalRoot.querySelector("#sc").value;
+    const start = modalRoot.querySelector("#s1").value;
+    const end = modalRoot.querySelector("#s2").value;
     const rate = Number(modalRoot.querySelector("#sr").value.replace(/[^0-9]/g, ""));
-    const hours = Number(modalRoot.querySelector("#sh").value.replace(/[^0-9.]/g, ""));
+    const back = Number(modalRoot.querySelector("#sb").value.replace(/[^0-9]/g, "")) || 0;
+    const hours = hoursBetween(start, end);
     if (!date || !cast) return alert("日付とキャストを選んでください。");
-    if (!rate || !hours) return alert("時給と勤務時間を入れてください。");
+    if (!hours) return alert("開始と終了が同じ時刻です。");
+    if (!rate) return alert("時給を入れてください。");
     state.settings.wages[cast] = rate;
+    state.settings.shiftStart = start;
+    state.settings.shiftEnd = end;
     closeModal();
-    onOk({ id: "s" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, rate, hours });
+    onOk({ id: "s" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, start, end, hours, rate, back });
   });
+
   const sel = modalRoot.querySelector("#sc");
   sel.addEventListener("change", () => {
     modalRoot.querySelector("#sr").value = state.settings.wages[sel.value] || 1500;
   });
+  const upd = () => {
+    modalRoot.querySelector("#shh").textContent =
+      hoursBetween(modalRoot.querySelector("#s1").value, modalRoot.querySelector("#s2").value);
+  };
+  modalRoot.querySelector("#s1").addEventListener("change", upd);
+  modalRoot.querySelector("#s2").addEventListener("change", upd);
 }
 
 function askAdjustment(onOk) {
@@ -801,6 +845,8 @@ function askAdjustment(onOk) {
     <select class="pay-input" style="text-align:left; font-size:1.05rem" id="ac">${castOptions(state.settings.casts[0])}</select>
     <p class="tiny" style="margin:14px 0 6px">内容</p>
     <input class="pay-input" style="text-align:left; font-size:1.05rem" id="an" placeholder="例）同伴手当・遅刻控除・前借り">
+    <div class="chips" style="margin-top:8px">${["ドリンクバック", "シャンパンバック", "同伴手当", "遅刻控除", "前借り"]
+      .map(t => `<button type="button" class="chip" data-fill="${t}">${t}</button>`).join("")}</div>
     <p class="tiny" style="margin:14px 0 6px">金額（控除はマイナスで入力）</p>
     <input class="pay-input" type="number" id="aa" placeholder="0">
     <div class="actions">
@@ -811,6 +857,7 @@ function askAdjustment(onOk) {
     if (btn.dataset.x !== "ok") return;
     const date = modalRoot.querySelector("#ad").value;
     const cast = modalRoot.querySelector("#ac").value;
+    if (btn.dataset.fill) { modalRoot.querySelector("#an").value = btn.dataset.fill; return; }
     const name = modalRoot.querySelector("#an").value.trim();
     const amount = Number(modalRoot.querySelector("#aa").value);
     if (!date || !cast) return alert("日付とキャストを選んでください。");
