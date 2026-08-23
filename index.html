@@ -342,6 +342,7 @@ function defaultState() {
     manualSales: [],
     payOverrides: [],
     fixedApplied: [],
+    catches: [],
     seq: 1,
   };
 }
@@ -767,7 +768,9 @@ function renderPayroll() {
   const expTotal = exps.reduce((a, e) => a + e.amount, 0);
   const pay = payroll(m);
   const payTotal = pay.reduce((a, r) => a + r.pay, 0);
-  const totalCost = expTotal + payTotal;
+  const catchList = monthOf(state.catches, m);
+  const catchTotal = catchList.reduce((a, c) => a + c.amount, 0);
+  const totalCost = expTotal + payTotal + catchTotal;
   const profit = sales - totalCost;                 /* 粗利（オーナー報酬を引く前） */
   const ow = state.settings.owner;
   const ownerPct = Math.round(profit * (ow.pct || 0) / 100);
@@ -848,6 +851,15 @@ function renderPayroll() {
       <span class="bv">${yen(p.total)}</span>
     </div>`).join("");
 
+  const catchRows = catchList.slice().sort((a, b) => b.date.localeCompare(a.date))
+    .map(c => `<tr><td>${c.date}</td><td>${esc(c.name)}</td><td>${esc(c.note || "")}</td>
+      <td class="num">${yen(c.amount)}</td>
+      <td>${editBtn("edit-catch", c.id)}<button class="linkish" data-act="delete-catch" data-id="${c.id}">取消</button></td></tr>`).join("")
+    || `<tr><td colspan="5" class="tiny">キャッチバックの記録がありません</td></tr>`;
+  const catchTotalRow = catchList.length
+    ? `<tr class="sum"><td colspan="3"><b>キャッチバック 合計</b></td><td class="num"><b>${yen(catchTotal)}</b></td><td></td></tr>`
+    : "";
+
   const catTotals = [...exps.reduce((m2, e) => m2.set(e.cat || "その他", (m2.get(e.cat || "その他") || 0) + e.amount), new Map())]
     .sort((a, b) => b[1] - a[1]);
   const expTotalRow = exps.length ? `<tr class="sum">
@@ -871,6 +883,7 @@ function renderPayroll() {
       <div class="kpi"><span>売上</span><b>${yen(sales)}</b></div>
       <div class="kpi"><span>経費</span><b>${yen(expTotal)}</b></div>
       <div class="kpi"><span>人件費</span><b>${yen(payTotal)}</b></div>
+      <div class="kpi"><span>キャッチバック</span><b>${yen(catchTotal)}</b></div>
       <div class="kpi"><span>総経費</span><b>${yen(totalCost)}</b></div>
       <div class="kpi"><span>粗利</span><b>${yen(profit)}</b></div>
       <div class="kpi"><span>${esc(ow.name)}の報酬</span><b>${yen(ownerPay)}</b></div>
@@ -885,6 +898,7 @@ function renderPayroll() {
         <tr><td><b>売上 合計</b></td><td class="num"><b>${yen(sales)}</b></td></tr>
         <tr><td>経費 合計</td><td class="num">−${yen(expTotal)}</td></tr>
         <tr><td>人件費 合計</td><td class="num">−${yen(payTotal)}</td></tr>
+        <tr><td>キャッチバック 合計</td><td class="num">−${yen(catchTotal)}</td></tr>
         <tr class="sum"><td><b>総経費</b></td><td class="num"><b>−${yen(totalCost)}</b></td></tr>
         <tr><td><b>粗利（売上 − 総経費）</b></td><td class="num"><b>${yen(profit)}</b></td></tr>
         <tr><td>${esc(ow.name)} 固定報酬</td><td class="num">−${yen(ow.fixed || 0)}</td></tr>
@@ -937,6 +951,19 @@ function renderPayroll() {
         <tr><th>日付</th><th>キャスト</th><th>内容</th><th class="num">金額</th><th></th></tr>
         ${adjRows}
       </table></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">キャッチバック（${m}）</h3>
+      <div class="scroll"><table>
+        <tr><th>日付</th><th>キャッチ名</th><th>メモ</th><th class="num">金額</th><th></th></tr>
+        ${catchRows}
+        ${catchTotalRow}
+      </table></div>
+      <div class="actions">
+        <button class="btn ghost" data-act="add-catch">＋ キャッチバックを追加</button>
+        <button class="btn ghost" data-act="csv-catch">キャッチをCSV出力</button>
+      </div>
     </div>
 
     <div class="panel" style="margin-bottom:16px">
@@ -1074,6 +1101,38 @@ function askAdjustment(onOk, cur = {}) {
     if (!amount) return alert("金額を入れてください。");
     closeModal();
     onOk({ id: cur.id || "a" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, name, amount });
+  });
+}
+
+function askCatch(onOk, cur = {}) {
+  const names = [...new Set(state.catches.map(c => c.name))].filter(Boolean);
+  openModal(`
+    <h3>${cur.id ? "キャッチバックを編集" : "キャッチバックを追加"}</h3>
+    ${dateField("kd", "日付", cur.date)}
+    <p class="tiny" style="margin:14px 0 6px">キャッチ名</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="kn" list="klist"
+           value="${esc(cur.name || "")}" placeholder="例）タカシ・A店ボーイ">
+    <datalist id="klist">${names.map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist>
+    <p class="tiny" style="margin:14px 0 6px">メモ（任意）</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="km"
+           value="${esc(cur.note || "")}" placeholder="例）新規2名分">
+    <p class="tiny" style="margin:14px 0 6px">金額（円）</p>
+    <input class="pay-input" inputmode="numeric" id="ka" value="${cur.amount || ""}" placeholder="0">
+    <div class="actions">
+      <button class="btn ghost" data-x="cancel">やめる</button>
+      <button class="btn" data-x="ok">記録する</button>
+    </div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x !== "ok") return;
+    const date = modalRoot.querySelector("#kd").value;
+    const name = modalRoot.querySelector("#kn").value.trim();
+    const note = modalRoot.querySelector("#km").value.trim();
+    const amount = Number(modalRoot.querySelector("#ka").value.replace(/[^0-9]/g, ""));
+    if (!date) return alert("日付を入れてください。");
+    if (!name) return alert("キャッチ名を入れてください。");
+    if (!amount) return alert("金額を入れてください。");
+    closeModal();
+    onOk({ id: cur.id || "k" + Date.now() + Math.random().toString(36).slice(2, 5), date, name, note, amount });
   });
 }
 
@@ -1633,6 +1692,20 @@ document.addEventListener("click", e => {
   if (act === "edit-manual") return editEntry(state.manualSales, el.dataset.id, askManualSale);
   if (act === "add-adj") return askAdjustment(x => { state.adjustments.push(x); save(); render(); });
   if (act === "add-manual") return askManualSale(x => { state.manualSales.push(x); save(); render(); });
+  if (act === "add-catch") return askCatch(x => { state.catches.push(x); save(); render(); });
+  if (act === "edit-catch") return editEntry(state.catches, el.dataset.id, askCatch);
+  if (act === "delete-catch") {
+    if (!confirm("このキャッチバックを取り消します。よろしいですか？")) return;
+    state.catches = state.catches.filter(x => x.id !== el.dataset.id);
+    save(); return render();
+  }
+  if (act === "csv-catch") {
+    if (!state.catches.length) return alert("キャッチバックの記録がありません。");
+    const rows = [["日付", "キャッチ名", "メモ", "金額"]];
+    state.catches.slice().sort((a, b) => a.date.localeCompare(b.date))
+      .forEach(c => rows.push([c.date, c.name, c.note || "", c.amount]));
+    return download(toCsv(rows), "catch-all.csv", "text/csv;charset=utf-8");
+  }
   if (act === "csv-payroll") return csvPayroll(currentMonth());
   if (act === "delete-shift") { state.shifts = state.shifts.filter(x => x.id !== el.dataset.id); save(); return render(); }
   if (act === "delete-adj") { state.adjustments = state.adjustments.filter(x => x.id !== el.dataset.id); save(); return render(); }
