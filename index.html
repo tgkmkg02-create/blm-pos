@@ -343,6 +343,7 @@ function defaultState() {
     payOverrides: [],
     fixedApplied: [],
     catches: [],
+    dailyPays: [],
     seq: 1,
   };
 }
@@ -768,9 +769,11 @@ function renderPayroll() {
   const expTotal = exps.reduce((a, e) => a + e.amount, 0);
   const pay = payroll(m);
   const payTotal = pay.reduce((a, r) => a + r.pay, 0);
+  const dailyList = monthOf(state.dailyPays, m);
+  const dailyTotal = dailyList.reduce((a, x) => a + x.amount, 0);
   const catchList = monthOf(state.catches, m);
   const catchTotal = catchList.reduce((a, c) => a + c.amount, 0);
-  const totalCost = expTotal + payTotal + catchTotal;
+  const totalCost = expTotal + payTotal + dailyTotal + catchTotal;
   const profit = sales - totalCost;                 /* 粗利（オーナー報酬を引く前） */
   const ow = state.settings.owner;
   const ownerPct = Math.round(profit * (ow.pct || 0) / 100);
@@ -851,6 +854,15 @@ function renderPayroll() {
       <span class="bv">${yen(p.total)}</span>
     </div>`).join("");
 
+  const dailyRows = dailyList.slice().sort((a, b) => b.date.localeCompare(a.date))
+    .map(x => `<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${esc(x.note || "")}</td>
+      <td class="num">${yen(x.amount)}</td>
+      <td>${editBtn("edit-daily", x.id)}<button class="linkish" data-act="delete-daily" data-id="${x.id}">取消</button></td></tr>`).join("")
+    || `<tr><td colspan="5" class="tiny">日払いの記録がありません</td></tr>`;
+  const dailyTotalRow = dailyList.length
+    ? `<tr class="sum"><td colspan="3"><b>日払い 合計</b></td><td class="num"><b>${yen(dailyTotal)}</b></td><td></td></tr>`
+    : "";
+
   const catchRows = catchList.slice().sort((a, b) => b.date.localeCompare(a.date))
     .map(c => `<tr><td>${c.date}</td><td>${esc(c.name)}</td><td>${esc(c.note || "")}</td>
       <td class="num">${yen(c.amount)}</td>
@@ -883,6 +895,7 @@ function renderPayroll() {
       <div class="kpi"><span>売上</span><b>${yen(sales)}</b></div>
       <div class="kpi"><span>経費</span><b>${yen(expTotal)}</b></div>
       <div class="kpi"><span>人件費</span><b>${yen(payTotal)}</b></div>
+      <div class="kpi"><span>日払い</span><b>${yen(dailyTotal)}</b></div>
       <div class="kpi"><span>キャッチバック</span><b>${yen(catchTotal)}</b></div>
       <div class="kpi"><span>総経費</span><b>${yen(totalCost)}</b></div>
       <div class="kpi"><span>粗利</span><b>${yen(profit)}</b></div>
@@ -897,7 +910,8 @@ function renderPayroll() {
         <tr><td>売上（手入力）</td><td class="num">${yen(manualTotal)}</td></tr>
         <tr><td><b>売上 合計</b></td><td class="num"><b>${yen(sales)}</b></td></tr>
         <tr><td>経費 合計</td><td class="num">−${yen(expTotal)}</td></tr>
-        <tr><td>人件費 合計</td><td class="num">−${yen(payTotal)}</td></tr>
+        <tr><td>人件費 合計（時給）</td><td class="num">−${yen(payTotal)}</td></tr>
+        <tr><td>日払い（体験）合計</td><td class="num">−${yen(dailyTotal)}</td></tr>
         <tr><td>キャッチバック 合計</td><td class="num">−${yen(catchTotal)}</td></tr>
         <tr class="sum"><td><b>総経費</b></td><td class="num"><b>−${yen(totalCost)}</b></td></tr>
         <tr><td><b>粗利（売上 − 総経費）</b></td><td class="num"><b>${yen(profit)}</b></td></tr>
@@ -928,7 +942,7 @@ function renderPayroll() {
         ${payRows}
         ${totalRow}
       </table></div>
-      <p class="tiny" style="margin-top:10px">人件費 <b>${yen(payTotal)}</b>${sales ? `　／　売上比 <b>${Math.round(payTotal / sales * 1000) / 10}%</b>` : ""}</p>
+      <p class="tiny" style="margin-top:10px">人件費（時給）<b>${yen(payTotal)}</b>　＋　日払い <b>${yen(dailyTotal)}</b>　＝　<b>${yen(payTotal + dailyTotal)}</b>${sales ? `　／　売上比 <b>${Math.round((payTotal + dailyTotal) / sales * 1000) / 10}%</b>` : ""}</p>
       <div class="actions">
         <button class="btn ghost" data-act="add-shift">＋ 出勤を追加</button>
         <button class="btn ghost" data-act="add-adj">＋ 手当・控除</button>
@@ -951,6 +965,19 @@ function renderPayroll() {
         <tr><th>日付</th><th>キャスト</th><th>内容</th><th class="num">金額</th><th></th></tr>
         ${adjRows}
       </table></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <h3 class="subhead" style="margin-top:0">日払い・体験（${m}）</h3>
+      <div class="scroll"><table>
+        <tr><th>日付</th><th>名前</th><th>メモ</th><th class="num">日給</th><th></th></tr>
+        ${dailyRows}
+        ${dailyTotalRow}
+      </table></div>
+      <div class="actions">
+        <button class="btn ghost" data-act="add-daily">＋ 日払いを追加</button>
+        <button class="btn ghost" data-act="csv-daily">日払いをCSV出力</button>
+      </div>
     </div>
 
     <div class="panel" style="margin-bottom:16px">
@@ -1101,6 +1128,38 @@ function askAdjustment(onOk, cur = {}) {
     if (!amount) return alert("金額を入れてください。");
     closeModal();
     onOk({ id: cur.id || "a" + Date.now() + Math.random().toString(36).slice(2, 5), date, cast, name, amount });
+  });
+}
+
+function askDaily(onOk, cur = {}) {
+  const names = [...new Set(state.dailyPays.map(x => x.name))].filter(Boolean);
+  openModal(`
+    <h3>${cur.id ? "日払いを編集" : "日払い・体験を追加"}</h3>
+    ${dateField("dd", "日付", cur.date)}
+    <p class="tiny" style="margin:14px 0 6px">名前</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="dn" list="dlist"
+           value="${esc(cur.name || "")}" placeholder="例）体験 みく">
+    <datalist id="dlist">${names.map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist>
+    <p class="tiny" style="margin:14px 0 6px">メモ（任意）</p>
+    <input class="pay-input" style="text-align:left; font-size:1.05rem" id="dm"
+           value="${esc(cur.note || "")}" placeholder="例）体験1日・20:00〜24:00">
+    <p class="tiny" style="margin:14px 0 6px">日給（円・そのまま支払う額）</p>
+    <input class="pay-input" inputmode="numeric" id="da" value="${cur.amount || ""}" placeholder="0">
+    <div class="actions">
+      <button class="btn ghost" data-x="cancel">やめる</button>
+      <button class="btn" data-x="ok">記録する</button>
+    </div>`, btn => {
+    if (btn.dataset.x === "cancel") return closeModal();
+    if (btn.dataset.x !== "ok") return;
+    const date = modalRoot.querySelector("#dd").value;
+    const name = modalRoot.querySelector("#dn").value.trim();
+    const note = modalRoot.querySelector("#dm").value.trim();
+    const amount = Number(modalRoot.querySelector("#da").value.replace(/[^0-9]/g, ""));
+    if (!date) return alert("日付を入れてください。");
+    if (!name) return alert("名前を入れてください。");
+    if (!amount) return alert("日給を入れてください。");
+    closeModal();
+    onOk({ id: cur.id || "d" + Date.now() + Math.random().toString(36).slice(2, 5), date, name, note, amount });
   });
 }
 
@@ -1692,6 +1751,20 @@ document.addEventListener("click", e => {
   if (act === "edit-manual") return editEntry(state.manualSales, el.dataset.id, askManualSale);
   if (act === "add-adj") return askAdjustment(x => { state.adjustments.push(x); save(); render(); });
   if (act === "add-manual") return askManualSale(x => { state.manualSales.push(x); save(); render(); });
+  if (act === "add-daily") return askDaily(x => { state.dailyPays.push(x); save(); render(); });
+  if (act === "edit-daily") return editEntry(state.dailyPays, el.dataset.id, askDaily);
+  if (act === "delete-daily") {
+    if (!confirm("この日払いを取り消します。よろしいですか？")) return;
+    state.dailyPays = state.dailyPays.filter(x => x.id !== el.dataset.id);
+    save(); return render();
+  }
+  if (act === "csv-daily") {
+    if (!state.dailyPays.length) return alert("日払いの記録がありません。");
+    const rows = [["日付", "名前", "メモ", "日給"]];
+    state.dailyPays.slice().sort((a, b) => a.date.localeCompare(b.date))
+      .forEach(x => rows.push([x.date, x.name, x.note || "", x.amount]));
+    return download(toCsv(rows), "daily-pay-all.csv", "text/csv;charset=utf-8");
+  }
   if (act === "add-catch") return askCatch(x => { state.catches.push(x); save(); render(); });
   if (act === "edit-catch") return editEntry(state.catches, el.dataset.id, askCatch);
   if (act === "delete-catch") {
